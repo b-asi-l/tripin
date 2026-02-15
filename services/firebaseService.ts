@@ -92,7 +92,7 @@ export const authService = {
               isVerified: false,
               co2Saved: 0,
               moneySaved: 0,
-              balance: 500,
+              balance: 0, // CHANGED: Initial balance set to 0
               createdAt: Date.now()
         });
       } catch (e) {

@@ -237,18 +237,6 @@ export default function App() {
     setLoading(false);
   };
 
-  const handleGuestLogin = async () => {
-    setLoading(true);
-    setError(null);
-    const { data, error: guestError } = await authService.signInGuest();
-    if (guestError) {
-        setError(guestError.message);
-    } else if (data?.user) {
-        handleAuthUser(data.user);
-    }
-    setLoading(false);
-  };
-
   const handleSuggestAi = async () => {
     if (!postFrom || !postTo) {
       alert("Please enter Origin and Destination first.");
@@ -390,22 +378,6 @@ export default function App() {
                 {loading ? 'Processing...' : (authMode === 'LOGIN' ? 'Login' : 'Create Account')}
               </button>
             </form>
-
-            <div className="w-full max-w-sm space-y-4 mt-4">
-                <div className="flex items-center gap-4 py-2">
-                    <div className="h-px bg-subtle flex-1" />
-                    <span className="text-[10px] font-black text-muted uppercase tracking-widest">Dev Mode</span>
-                    <div className="h-px bg-subtle flex-1" />
-                </div>
-                
-                <button 
-                    onClick={handleGuestLogin}
-                    disabled={loading}
-                    className="w-full bg-surface border border-subtle text-main py-5 rounded-[24px] font-black text-xs uppercase tracking-widest hover:bg-surface-alt transition-all active:scale-95 flex items-center justify-center gap-3"
-                >
-                    🚀 Fast Guest Login
-                </button>
-            </div>
 
             <button onClick={() => { setAuthMode(authMode === 'LOGIN' ? 'SIGNUP' : 'LOGIN'); setError(null); }} className="mt-8 text-muted text-[10px] font-black uppercase tracking-widest hover:text-[var(--color-primary)]">
                 {authMode === 'LOGIN' ? "New here? Join TripIn" : "Already a member? Login"}

@@ -77,9 +77,8 @@ export const DriverKYC: React.FC<Props> = ({ user, onBack, onSuccess }) => {
         if (lError) throw new Error(lError);
         docUrl = lUrl || '';
 
-        // Upload Vehicle Photo
-        // FIX: Nested under user_uploads/{userId}/vehicle_image/ to comply with Security Rules
-        const vehiclePath = `user_uploads/${user.id}/vehicle_image/${Date.now()}_vehicle`;
+        // Upload Vehicle Photo to 'vehicle_docs' folder as requested
+        const vehiclePath = `vehicle_docs/${user.id}/${Date.now()}_vehicle`;
         const { url: vUrl, error: vError } = await storageService.uploadKYC(vehicleFile, vehiclePath);
         if (vError) throw new Error(vError);
         vehicleUrl = vUrl || '';

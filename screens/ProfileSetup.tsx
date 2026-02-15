@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { User } from '../types';
-import { userService, kycService } from '../services/firebaseService';
+import { userService, kycService, storageService } from '../services/firebaseService';
 import { Icons } from '../constants';
 
 interface Props {
   user: User;
-  onSuccess: (role: 'driver' | 'passenger') => void;
+  onSuccess: (role: 'driver' | 'passenger') => void; // Actually updated to string based on usage in App.tsx but logic inside uses string
 }
 
 export const ProfileSetup: React.FC<Props> = ({ user, onSuccess }) => {
@@ -15,8 +15,21 @@ export const ProfileSetup: React.FC<Props> = ({ user, onSuccess }) => {
   const [sex, setSex] = useState<'Male' | 'Female' | 'Other'>(user.sex || 'Male');
   const [bloodGroup, setBloodGroup] = useState(user.bloodGroup || '');
   const [emergencyContact, setEmergencyContact] = useState(user.emergencyContact || '');
-  const [role, setRole] = useState<'passenger' | 'driver'>('passenger');
+  const [role, setRole] = useState<'passenger' | 'driver'>(user.isDriver ? 'driver' : 'passenger');
   const [loading, setLoading] = useState(false);
+  
+  // Avatar state
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState(user.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.id}`);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+        const file = e.target.files[0];
+        setAvatarFile(file);
+        setPreviewUrl(URL.createObjectURL(file));
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,27 +42,37 @@ export const ProfileSetup: React.FC<Props> = ({ user, onSuccess }) => {
 
     setLoading(true);
 
-    const commonUpdates = {
-      name,
-      phone,
-      address,
-      sex,
-      bloodGroup,
-      emergencyContact,
-      isOnboarded: true,
-      // If they select driver, we set the flag in the user profile too
-      isDriver: role === 'driver' 
-    };
-
     try {
-        // 1. Always update the main user profile (users collection)
+        let finalAvatarUrl = user.avatar;
+
+        // 1. Upload Image if changed
+        if (avatarFile) {
+            const path = `user_uploads/${user.id}/profile_${Date.now()}`;
+            const { url, error } = await storageService.uploadKYC(avatarFile, path);
+            if (error) throw new Error("Profile image upload failed: " + error);
+            if (url) finalAvatarUrl = url;
+        }
+
+        const commonUpdates = {
+            name,
+            phone,
+            address,
+            sex,
+            bloodGroup,
+            emergencyContact,
+            isOnboarded: true,
+            isDriver: role === 'driver',
+            avatar: finalAvatarUrl
+        };
+
+        // 2. Always update the main user profile (users collection)
         const { error } = await userService.updateProfile(user.id, commonUpdates);
         
         if (error) {
             throw new Error(error.message);
         }
 
-        // 2. If Driver, save details to 'drivers' collection as well
+        // 3. If Driver, save details to 'drivers' collection as well
         if (role === 'driver') {
             await kycService.registerDriverBasicInfo(user.id, {
                 name,
@@ -60,6 +83,7 @@ export const ProfileSetup: React.FC<Props> = ({ user, onSuccess }) => {
         }
 
         setLoading(false);
+        // @ts-ignore
         onSuccess(role);
 
     } catch (err: any) {
@@ -71,15 +95,42 @@ export const ProfileSetup: React.FC<Props> = ({ user, onSuccess }) => {
   return (
     <div className="p-8 space-y-8 animate-in slide-in-from-bottom-10 h-full flex flex-col pb-32">
        <div className="text-center space-y-4">
-         <div className="w-24 h-24 mx-auto rounded-full p-1 border-2 border-[var(--color-primary)]">
-            <img src={user.avatar} className="w-full h-full rounded-full object-cover" />
+         <div className="relative inline-block group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
+            <div className="w-32 h-32 mx-auto rounded-full p-1 border-4 border-[var(--color-primary)] relative overflow-hidden">
+                <img src={previewUrl} className="w-full h-full rounded-full object-cover" />
+                <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-full">
+                    <span className="text-white text-xs font-bold uppercase tracking-widest">Change</span>
+                </div>
+            </div>
+            <div className="absolute bottom-0 right-0 bg-surface p-2 rounded-full shadow-lg border border-subtle text-[var(--color-primary)]">
+                <Icons.User className="w-5 h-5" />
+            </div>
+            <input 
+                type="file" 
+                ref={fileInputRef} 
+                onChange={handleFileChange} 
+                className="hidden" 
+                accept="image/*"
+            />
          </div>
          <h2 className="text-3xl font-black italic uppercase text-main tracking-tighter">Complete Profile</h2>
-         <p className="text-muted text-xs font-bold">Help the community know you better.</p>
+         <p className="text-muted text-xs font-bold">Tap the photo to upload your own picture.</p>
        </div>
 
       <div className="bg-surface p-8 rounded-[40px] border border-subtle card-shadow">
         <form onSubmit={handleSubmit} className="space-y-6">
+            
+            <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase text-muted ml-4 tracking-widest">Full Name</label>
+                <input 
+                    type="text" 
+                    value={name} 
+                    onChange={e => setName(e.target.value)} 
+                    placeholder="Your Name" 
+                    className="w-full bg-surface-alt p-5 rounded-[24px] font-bold text-main border border-subtle outline-none focus:border-[var(--color-primary)]"
+                    required
+                />
+            </div>
             
             {/* Role Selection */}
             <div className="space-y-3">
@@ -107,18 +158,6 @@ export const ProfileSetup: React.FC<Props> = ({ user, onSuccess }) => {
                         <span className={`text-[10px] font-black uppercase tracking-widest ${role === 'driver' ? 'text-[#EA580C]' : 'text-muted'}`}>Offer Rides</span>
                      </button>
                  </div>
-            </div>
-
-            <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase text-muted ml-4 tracking-widest">Full Name</label>
-                <input 
-                    type="text" 
-                    value={name} 
-                    onChange={e => setName(e.target.value)} 
-                    placeholder="Your Name" 
-                    className="w-full bg-surface-alt p-5 rounded-[24px] font-bold text-main border border-subtle outline-none focus:border-[var(--color-primary)]"
-                    required
-                />
             </div>
 
             <div className="space-y-2">
