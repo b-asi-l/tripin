@@ -1,0 +1,7 @@
+{
+  "name": "Copy of Copy of Copy of TripIn - Kerala Pooling",
+  "description": "A community-driven car and bike pooling application focused on Kerala, featuring AI-powered trip optimization and verified citizen IDs.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
