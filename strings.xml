@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">TripIn - Kerala</string>
+    <string name="location_permission_rationale">TripIn needs your location to help you find and offer rides effectively within Kerala.</string>
+</resources>

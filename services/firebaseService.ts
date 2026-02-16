@@ -1,3 +1,4 @@
+
 import { initializeApp } from "firebase/app";
 import { 
   getAuth, 
@@ -20,7 +21,11 @@ import {
   updateDoc, 
   query, 
   where, 
-  onSnapshot
+  onSnapshot,
+  orderBy,
+  limit,
+  writeBatch,
+  increment
 } from "firebase/firestore";
 import { 
   getStorage, 
@@ -28,12 +33,7 @@ import {
   uploadBytes, 
   getDownloadURL 
 } from "firebase/storage";
-import { Trip, Booking, TripStatus, LiveLocation } from '../types';
-
-/**
- * FIRESTORE SECURITY RULES (ENFORCEMENT):
- * ... (same as before)
- */
+import { Trip, Booking, TripStatus, LiveLocation, DriverTransaction } from '../types';
 
 const firebaseConfig = {
   apiKey: "AIzaSyAR-IdPcUwNIIUvniuvMbIQkp7-nhRS3uY",
@@ -73,10 +73,8 @@ export const authService = {
         photoURL: avatar
       });
       
-      // Send Verification Email
       await sendEmailVerification(user);
 
-      // Attempt to create Firestore doc. If it fails, auth still succeeded.
       try {
         await setDoc(doc(db, "users", user.uid), {
               id: user.uid,
@@ -88,18 +86,18 @@ export const authService = {
               isDriver: false,
               rating: 5.0,
               tripsCount: 0,
-              isOnboarded: false, // Set to false so they hit the Profile Setup screen
+              isOnboarded: false,
               isVerified: false,
               co2Saved: 0,
               moneySaved: 0,
-              balance: 0, // CHANGED: Initial balance set to 0
+              balance: 0, 
+              earnings: 0,
               createdAt: Date.now()
         });
       } catch (e) {
         console.error("Firestore Profile Creation Failed:", e);
       }
       
-      // Sign out to enforce email verification flow before accessing the app
       await signOut(auth);
 
       return { data: { user: user, session: false }, error: null };
@@ -114,7 +112,6 @@ export const authService = {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       return { data: { user: userCredential.user }, error: null };
     } catch (error: any) {
-      // Return error so UI can display "Invalid credentials"
       return { data: null, error: { message: error.message } };
     }
   },
@@ -134,12 +131,13 @@ export const authService = {
         isDriver: true,
         rating: 4.9,
         tripsCount: 42,
-        isOnboarded: true, // Guests skip onboarding for demo purposes
+        isOnboarded: true,
         isVerified: true,
         driverVerificationStatus: 'VERIFIED',
         co2Saved: 42,
         moneySaved: 2500,
         balance: 1000,
+        earnings: 540,
         phone: '+91 9999999999',
         address: 'Technopark, Trivandrum, Kerala',
         sex: 'Other',
@@ -148,22 +146,28 @@ export const authService = {
       
       try {
         await setDoc(doc(db, "users", user.uid), guestData);
-        // We use setDoc here. Since guest is new, it's a create. 
-        // If guest exists, this might fail due to "update" rules being admin-only.
-        // We wrap in try-catch to allow login to proceed even if profile write fails.
+        try {
+            await setDoc(doc(db, "drivers bank", user.uid), {
+                accountName: 'Guest Pilot',
+                accountNumber: '1234567890',
+                ifsc: 'SBIN0001234',
+                bankName: 'TripIn Bank',
+                updatedAt: Date.now()
+            });
+        } catch (ignored) { }
+        
         await setDoc(doc(db, "drivers", user.uid), {
            userId: user.uid,
            licenseNumber: 'KL-01-GUEST',
            verificationStatus: 'approved',
            submittedAt: Date.now()
-        });
+        }, { merge: true });
+
       } catch (firestoreErr: any) {
-        console.warn("Guest setup warning (Rules might be blocking):", firestoreErr.code);
-        // Continue anyway, UI will handle missing profile
+        console.warn("Guest setup warning:", firestoreErr.code);
       }
 
       if (manualCallback) {
-        // Pass sanitized user object to callback
         manualCallback({
           uid: user.uid,
           id: user.uid,
@@ -194,8 +198,6 @@ export const authService = {
     manualCallback = callback;
     const unsubscribe = onAuthStateChanged(auth, (user) => {
         if (user) {
-            // Fix: Do not spread ...user as it contains circular references
-            // Extract only serializable properties
             callback({
                 uid: user.uid,
                 id: user.uid,
@@ -233,7 +235,6 @@ export const tripService = {
       });
       return { data: sortAndFilterTrips(trips), error: null };
     } catch (error: any) {
-      console.error("getAllTrips error:", error);
       return { data: [], error };
     }
   },
@@ -244,7 +245,6 @@ export const tripService = {
       const docRef = await addDoc(collection(db, "trips"), payload);
       return { data: { id: docRef.id, ...payload }, error: null };
     } catch (error: any) {
-      console.error("Create Trip Error:", error);
       return { data: null, error };
     }
   },
@@ -259,10 +259,7 @@ export const tripService = {
         });
         callback(sortAndFilterTrips(trips));
       },
-      (error) => {
-        console.warn("Trip listener warning (Permissions/Network):", error.message);
-        // Do not crash, just allow UI to show empty or existing state
-      }
+      (error) => {}
     );
     return unsubscribe;
   }
@@ -281,6 +278,7 @@ export const userService = {
         const userData = userSnap.data();
         let driverData = null;
         let driverVerificationStatus = 'NONE';
+        let bankDetails = null;
 
         try {
             const driverRef = doc(db, "drivers", uid);
@@ -292,21 +290,33 @@ export const userService = {
                 else if (status === 'pending') driverVerificationStatus = 'PENDING';
                 else if (status === 'rejected') driverVerificationStatus = 'REJECTED';
             }
-        } catch (e) { /* ignore driver fetch error */ }
+        } catch (e) { }
+
+        try {
+            const bankRef = doc(db, "drivers bank", uid);
+            const bankSnap = await getDoc(bankRef);
+            if (bankSnap.exists()) {
+                bankDetails = bankSnap.data();
+            }
+        } catch (e) { }
+
+        if (!bankDetails) {
+            if (userData.bankDetails) bankDetails = userData.bankDetails;
+            else if (driverData && driverData.bankDetails) bankDetails = driverData.bankDetails;
+        }
 
         return { 
             data: { 
                 ...userData, 
                 driverData,
-                driverVerificationStatus 
+                driverVerificationStatus,
+                bankDetails 
             }, 
             error: null 
         };
       }
       return { data: null, error: "Profile not found" };
     } catch (error: any) {
-      // Log but return object that helps UI decide
-      console.error("getUserProfile fetch error:", error.code);
       return { data: null, error };
     }
   },
@@ -314,7 +324,6 @@ export const userService = {
   updateProfile: async (uid: string, data: any) => {
     try {
       const docRef = doc(db, "users", uid);
-      // Changed to setDoc with merge: true to handle missing docs elegantly
       await setDoc(docRef, data, { merge: true });
       return { data, error: null };
     } catch (error: any) {
@@ -325,15 +334,143 @@ export const userService = {
   topUpBalance: async (uid: string, amount: number) => {
     try {
       const userRef = doc(db, "users", uid);
-      const userSnap = await getDoc(userRef);
-      if (userSnap.exists()) {
-        const currentBalance = userSnap.data().balance || 0;
-        await updateDoc(userRef, { balance: currentBalance + amount });
-        return { data: currentBalance + amount, error: null };
-      }
-      return { data: null, error: "User not found" };
+      // Use atomic increment for safety
+      await updateDoc(userRef, { balance: increment(amount) });
+      return { data: amount, error: null };
     } catch (e: any) {
       return { data: null, error: e };
+    }
+  }
+};
+
+export const driverService = {
+  recalculateEarnings: async (driverId: string) => {
+    try {
+        const qb = query(collection(db, "bookings"), where("driverId", "==", driverId));
+        const bSnap = await getDocs(qb);
+        let totalIncome = 0;
+        let tripsCount = 0;
+        
+        bSnap.forEach(d => {
+           const b = d.data();
+           if(b.status === 'CONFIRMED' || b.status === 'COMPLETED') {
+              totalIncome += (b.amount || 0) * 0.99;
+              tripsCount++;
+           }
+        });
+
+        const qw = query(collection(db, "users", driverId, "withdrawals"));
+        const wSnap = await getDocs(qw);
+        let totalWithdrawn = 0;
+        
+        wSnap.forEach(d => {
+           const w = d.data();
+           if(w.status !== 'FAILED') {
+              totalWithdrawn += (w.amount || 0);
+           }
+        });
+
+        const netEarnings = totalIncome - totalWithdrawn;
+
+        await updateDoc(doc(db, "users", driverId), {
+            earnings: netEarnings,
+            tripsCount: tripsCount
+        });
+
+        return { earnings: netEarnings, trips: tripsCount };
+    } catch (e) {
+        console.error("Recalculation failed", e);
+        return null;
+    }
+  },
+
+  getEarningsHistory: async (driverId: string) => {
+    const transactions: DriverTransaction[] = [];
+    try {
+      const earningsQ = query(
+        collection(db, "bookings"), 
+        where("driverId", "==", driverId),
+        limit(50)
+      );
+      const earningsSnap = await getDocs(earningsQ);
+      earningsSnap.forEach(doc => {
+        const b = doc.data();
+        if (b.status === 'CONFIRMED' || b.status === 'COMPLETED') {
+             const earningAmount = (b.amount || 0); 
+             transactions.push({
+                id: doc.id,
+                driverId: b.driverId,
+                amount: earningAmount,
+                type: 'RIDE_EARNING',
+                description: `Ride from ${b.from?.split(',')[0] || 'Location'}`,
+                status: 'COMPLETED',
+                createdAt: b.createdAt || Date.now()
+             });
+        }
+      });
+    } catch (e: any) {}
+
+    try {
+      const withdrawalsQ = query(
+        collection(db, "users", driverId, "withdrawals"),
+        limit(50)
+      );
+      const withdrawSnap = await getDocs(withdrawalsQ);
+      withdrawSnap.forEach(doc => {
+         transactions.push({ id: doc.id, ...doc.data() } as DriverTransaction);
+      });
+    } catch (e: any) {}
+
+    transactions.sort((a, b) => b.createdAt - a.createdAt);
+    return { data: transactions, error: null };
+  },
+
+  saveBankDetails: async (userId: string, bankDetails: any) => {
+    try {
+      try {
+        await setDoc(doc(db, "drivers bank", userId), {
+           ...bankDetails,
+           updatedAt: Date.now()
+        }, { merge: true });
+        return { success: true, error: null };
+      } catch (permError: any) {
+         await updateDoc(doc(db, "users", userId), {
+             bankDetails: bankDetails
+         });
+         return { success: true, error: null };
+      }
+    } catch (e: any) {
+       return { success: false, error: e };
+    }
+  },
+
+  redeemEarnings: async (userId: string, amount: number, bankDetails: any) => {
+    try {
+      if (amount <= 0) return { error: "No earnings to redeem" };
+
+      // Use Batch for atomic withdrawal request
+      const batch = writeBatch(db);
+      
+      const withdrawalRef = doc(collection(db, "users", userId, "withdrawals"));
+      batch.set(withdrawalRef, {
+        driverId: userId,
+        amount: amount,
+        type: 'WITHDRAWAL',
+        description: 'Earnings payout to Bank Account',
+        bankDetails, 
+        status: 'PROCESSING',
+        createdAt: Date.now()
+      });
+
+      // Reset displayed earnings immediately (source of truth is recalculated, but this is UX)
+      const userRef = doc(db, "users", userId);
+      batch.update(userRef, { earnings: 0 });
+
+      await batch.commit();
+
+      return { success: true, error: null };
+    } catch (error: any) {
+      return { success: false, error };
     }
   }
 };
@@ -346,13 +483,11 @@ export const locationService = {
     try {
       const locationRef = doc(db, "live_locations", uid);
       await setDoc(locationRef, {
-        ownerId: uid, // Required by rules: resource.data.ownerId == request.auth.uid
+        ownerId: uid, 
         ...location,
         timestamp: Date.now()
       });
-    } catch (error) {
-      // Silent fail for location updates is acceptable
-    }
+    } catch (error) {}
   },
 
   listenToUserLocation: (uid: string, callback: (location: LiveLocation | null) => void) => {
@@ -372,48 +507,90 @@ export const locationService = {
 export const bookingService = {
   createBooking: async (bookingData: any, paymentMethod: string) => {
     try {
+      const batch = writeBatch(db);
+      
+      // 1. Create Booking Reference
+      const bookingRef = doc(collection(db, "bookings"));
       const bookingPayload = {
         ...bookingData,
-        riderId: bookingData.userId, // Rules require 'riderId'
+        id: bookingRef.id,
+        // Crucial: Use String() to ensure these are not undefined/null, which causes rules to fail
+        riderId: String(bookingData.userId), 
+        driverId: String(bookingData.driverId),
         paymentMethod,
         createdAt: Date.now()
       };
-      
-      // Rules allow create if request.resource.data.riderId == request.auth.uid
-      const bookingRef = await addDoc(collection(db, "bookings"), bookingPayload);
-      const savedBooking = { id: bookingRef.id, ...bookingPayload };
+      batch.set(bookingRef, bookingPayload);
 
-      await addDoc(collection(db, "payments"), {
+      // 2. Create Payment Record
+      const paymentRef = doc(collection(db, "payments"));
+      batch.set(paymentRef, {
         bookingId: bookingRef.id,
-        riderId: bookingData.userId,
-        driverId: bookingData.driverId,
-        ownerId: bookingData.driverId, // Helper for rules if needed
+        riderId: String(bookingData.userId),
+        driverId: String(bookingData.driverId),
+        ownerId: String(bookingData.driverId), 
         amount: bookingData.amount + 5,
         method: paymentMethod,
         status: 'SUCCESS',
         createdAt: Date.now()
       });
 
+      // 3. Wallet Deduction (Atomic)
       if (paymentMethod === 'WALLET') {
         const userRef = doc(db, "users", bookingData.userId);
-        try {
-            const userSnap = await getDoc(userRef);
-            if (userSnap.exists()) {
-                const userData = userSnap.data();
-                await updateDoc(userRef, {
-                    balance: (userData.balance || 0) - (bookingData.amount + 5),
-                    moneySaved: (userData.moneySaved || 0) + 50,
-                    co2Saved: (userData.co2Saved || 0) + 2
-                });
+        const userSnap = await getDoc(userRef);
+        
+        if (userSnap.exists()) {
+            const currentBalance = userSnap.data().balance || 0;
+            const totalCost = bookingData.amount + 5;
+            
+            if (currentBalance < totalCost) {
+                return { data: null, error: { message: "Insufficient wallet balance" } };
             }
-        } catch (e) {
-            console.error("Wallet update failed:", e);
+            
+            batch.update(userRef, {
+                balance: increment(-totalCost),
+                moneySaved: increment(50),
+                co2Saved: increment(2)
+            });
         }
       }
 
-      return { data: savedBooking, error: null };
+      // 4. Update Trip Seats
+      if (bookingData.tripId) {
+          const tripRef = doc(db, "trips", bookingData.tripId);
+          // Only works if security rules allow update (relaxed in new rules)
+          batch.update(tripRef, { availableSeats: increment(-1) });
+      }
+
+      await batch.commit();
+      return { data: bookingPayload, error: null };
     } catch (error: any) {
+      console.error("Booking Creation Error", error);
       return { data: null, error };
+    }
+  },
+
+  cancelBooking: async (bookingId: string, tripId: string, userId: string, refundAmount: number) => {
+    try {
+        const batch = writeBatch(db);
+        
+        // 1. Update Booking Status
+        const bookingRef = doc(db, "bookings", bookingId);
+        batch.update(bookingRef, { status: 'CANCELLED' });
+
+        // 2. Restore Trip Seat
+        const tripRef = doc(db, "trips", tripId);
+        batch.update(tripRef, { availableSeats: increment(1) });
+
+        // 3. Refund User Wallet
+        const userRef = doc(db, "users", userId);
+        batch.update(userRef, { balance: increment(refundAmount) });
+
+        await batch.commit();
+        return { success: true, error: null };
+    } catch (e: any) {
+        return { success: false, error: e };
     }
   },
 
@@ -433,56 +610,121 @@ export const bookingService = {
 };
 
 /* =========================
+   CHAT SERVICE
+========================= */
+export const chatService = {
+  // Checks if the chat document exists for the booking; if not, creates it.
+  ensureChatExists: async (chatId: string, participants: string[]) => {
+     if (!auth.currentUser) return { error: "Not authenticated" };
+     try {
+       const chatRef = doc(db, "chats", chatId);
+       const chatSnap = await getDoc(chatRef);
+       
+       if (!chatSnap.exists()) {
+          console.log("Creating new chat document for:", chatId);
+          await setDoc(chatRef, {
+              participants: participants,
+              createdAt: Date.now(),
+              lastMessage: "",
+              updatedAt: Date.now()
+          });
+       }
+       return { success: true };
+     } catch (e: any) {
+       console.error("Error creating chat:", e);
+       return { error: e };
+     }
+  },
+
+  sendMessage: async (chatId: string, senderId: string, text: string) => {
+    try {
+      // Add message to subcollection
+      await addDoc(collection(db, "chats", chatId, "messages"), {
+        senderId,
+        text,
+        timestamp: Date.now()
+      });
+      
+      // Update parent chat with last message
+      await updateDoc(doc(db, "chats", chatId), {
+        lastMessage: text,
+        updatedAt: Date.now()
+      });
+
+      return { success: true, error: null };
+    } catch (error: any) {
+      console.error("Error sending message:", error);
+      return { success: false, error };
+    }
+  },
+
+  listenToMessages: (chatId: string, callback: (messages: any[]) => void, onError?: (error: any) => void) => {
+    if (!chatId) {
+        console.error("listenToMessages called with empty chatId");
+        if (onError) onError({ code: 'invalid-argument', message: 'Chat ID is missing' });
+        return () => {};
+    }
+
+    const q = query(
+      collection(db, "chats", chatId, "messages"),
+      orderBy("timestamp", "asc")
+    );
+    
+    return onSnapshot(q, (snapshot) => {
+      const messages = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      callback(messages);
+    }, (error) => {
+      console.error("Chat listener error:", error.code, error.message);
+      if (onError) onError(error);
+    });
+  }
+};
+
+/* =========================
    STORAGE & KYC SERVICE
 ========================= */
 export const storageService = {
   uploadKYC: async (file: File, path: string) => {
     try {
-      // 1. Ensure Auth Ready (Required by Storage Rules: if request.auth != null)
       let user = auth.currentUser;
       
-      // If user is not immediately available, wait briefly for SDK initialization
       if (!user) {
-         user = await new Promise((resolve) => {
-             const unsub = onAuthStateChanged(auth, (u) => {
-                 unsub();
-                 resolve(u);
-             });
-             // Fallback timeout to prevent hanging
-             setTimeout(() => resolve(null), 2000);
-         });
+          for(let i=0; i<5; i++) {
+             await new Promise(r => setTimeout(r, 200));
+             user = auth.currentUser;
+             if(user) break;
+          }
       }
 
       if (!user) {
-          return { url: null, error: "You are not logged in or your session has expired. Please refresh the page." };
+          return { url: null, error: "Session expired. Please log in again." };
       }
       
-      const storageRef = ref(storage, path);
+      const fileExt = file.name.split('.').pop()?.toLowerCase() || 'jpg';
+      const cleanPath = path.replace(/\.[^/.]+$/, ""); 
+      const finalPath = `${cleanPath}.${fileExt}`;
+      
+      const storageRef = ref(storage, finalPath);
       
       const metadata = {
-          contentType: file.type,
-          customMetadata: {
-              'uid': user.uid
-          }
+        contentType: file.type || 'image/jpeg',
       };
-
+      
       const snapshot = await uploadBytes(storageRef, file, metadata);
       const downloadURL = await getDownloadURL(snapshot.ref);
+      
       return { url: downloadURL, error: null };
     } catch (error: any) {
-      console.error("Upload failed detailed:", error);
-      let errorMessage = "Upload failed. Please try again.";
+      console.error("Storage Upload Error:", error);
+      let errorMessage = "Upload failed. Please retry.";
+      if (error.code === 'storage/unauthorized') errorMessage = "Permission denied. (Unauthorized)";
+      if (error.code === 'storage/canceled') errorMessage = "Upload canceled.";
+      if (error.code === 'storage/retry-limit-exceeded') errorMessage = "Poor connection. Upload timed out.";
       
-      if (error.code === 'storage/unauthenticated') {
-        errorMessage = "You are not logged in or your session has expired. Please refresh the page.";
-      } else if (error.code === 'storage/retry-limit-exceeded') {
-        errorMessage = "Connection unstable. Please check your internet.";
-      } else if (error.code === 'storage/canceled') {
-        errorMessage = "Upload canceled.";
-      } else if (error.code === 'storage/unauthorized') {
-         errorMessage = "Permission denied. Please ensure you are uploading a valid file type to the correct location.";
-      }
-      return { url: null, error: errorMessage };
+      return { url: null, error: `${errorMessage} (${error.code || 'unknown'})` };
     }
   }
 };
@@ -490,39 +732,38 @@ export const storageService = {
 export const kycService = {
   submitCustomerKYC: async (uid: string, data: any) => {
     try {
-        await updateDoc(doc(db, "users", uid), {
-            kycData: data,
+        await setDoc(doc(db, "users", uid), {
+            kycData: {
+                ...data,
+                submittedAt: Date.now()
+            },
             isVerified: false
-        });
+        }, { merge: true });
         return { data, error: null };
-    } catch (e) {
-        return { data: null, error: e };
+    } catch (e: any) {
+        return { data: null, error: e.message || "KYC Submission failed" };
     }
   },
 
-  registerDriverBasicInfo: async (uid: string, data: { name: string, phone: string, address: string, sex: string }) => {
+  registerDriverBasicInfo: async (uid: string, data: any) => {
     try {
-      // Create/Update the driver document with basic info
       await setDoc(doc(db, "drivers", uid), {
          userId: uid,
          name: data.name,
          phone: data.phone,
          address: data.address,
          sex: data.sex,
-         verificationStatus: 'incomplete', // Status indicating docs are missing
+         verificationStatus: 'incomplete', 
          updatedAt: Date.now()
       }, { merge: true });
       return { success: true };
     } catch (e: any) {
-       console.error("Failed to register driver basic info", e);
        return { success: false, error: e };
     }
   },
 
-  submitDriverKYC: async (uid: string, data: { license: string, vehicleNo: string, docUrl: string, vehicleUrl: string, vehicleType: string }) => {
+  submitDriverKYC: async (uid: string, data: any) => {
     try {
-        // 1. Create Driver Profile (if not exists)
-        // Store the license number in the drivers collection as requested
         try {
             await setDoc(doc(db, "drivers", uid), {
                 userId: uid,
@@ -532,28 +773,26 @@ export const kycService = {
                 submittedAt: Date.now()
             }, { merge: true }); 
         } catch (e: any) {
-            console.warn("Driver doc write warning:", e.code);
+             console.error("Driver doc update failed", e);
+             throw new Error("Could not update driver profile.");
         }
 
-        // 2. Add/Update Vehicle Info
         await addDoc(collection(db, "vehicles"), {
             driverId: uid,
             vehicleType: data.vehicleType,
             registrationNumber: data.vehicleNo,
-            vehicleImageUrl: data.vehicleUrl, // Save vehicle photo URL
+            vehicleImageUrl: data.vehicleUrl, 
             isVerified: false,
             createdAt: Date.now()
         });
 
-        // 3. Update User Profile flag
-        await updateDoc(doc(db, "users", uid), {
+        await setDoc(doc(db, "users", uid), {
             isDriver: true
-        });
+        }, { merge: true });
 
         return { data, error: null };
-    } catch (e) {
-        console.error("Driver KYC Submit Error", e);
-        return { data: null, error: e };
+    } catch (e: any) {
+        return { data: null, error: e.message };
     }
   }
 };

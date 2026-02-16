@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { User, VehicleType } from '../types';
 import { kycService, storageService } from '../services/firebaseService';
@@ -72,13 +73,13 @@ export const DriverKYC: React.FC<Props> = ({ user, onBack, onSuccess }) => {
 
     try {
         // Upload License
-        const licensePath = `user_uploads/${user.id}/${Date.now()}_license`;
+        const licensePath = `driver_documents/${user.id}/license_${Date.now()}`;
         const { url: lUrl, error: lError } = await storageService.uploadKYC(licenseFile, licensePath);
         if (lError) throw new Error(lError);
         docUrl = lUrl || '';
 
-        // Upload Vehicle Photo to 'vehicle_docs' folder as requested
-        const vehiclePath = `vehicle_docs/${user.id}/${Date.now()}_vehicle`;
+        // Upload Vehicle Photo
+        const vehiclePath = `driver_documents/${user.id}/vehicle_${Date.now()}`;
         const { url: vUrl, error: vError } = await storageService.uploadKYC(vehicleFile, vehiclePath);
         if (vError) throw new Error(vError);
         vehicleUrl = vUrl || '';
@@ -107,9 +108,7 @@ export const DriverKYC: React.FC<Props> = ({ user, onBack, onSuccess }) => {
   return (
     <div className="p-8 space-y-8 animate-in slide-in-from-bottom-10 h-full flex flex-col">
        <div className="flex items-center gap-4">
-        {user.driverVerificationStatus !== 'PENDING' && (
-           <button onClick={onBack} className="bg-surface p-3 rounded-xl border border-subtle text-main hover:bg-subtle transition-all">←</button>
-        )}
+        <button onClick={onBack} className="bg-surface p-3 rounded-xl border border-subtle text-main hover:bg-subtle transition-all">←</button>
         <h2 className="text-xl font-black italic uppercase text-main">Driver Registration</h2>
       </div>
 
