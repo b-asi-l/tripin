@@ -33,14 +33,16 @@ const LocationInput = ({
   value, 
   onChange, 
   onUseCurrentLocation,
-  isLocating 
+  isLocating,
+  locationError
 }: { 
   label: string, 
   placeholder: string, 
   value: string, 
   onChange: (v: string, lat?: number, lon?: number) => void,
   onUseCurrentLocation?: () => void,
-  isLocating?: boolean
+  isLocating?: boolean,
+  locationError?: string | null
 }) => {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState<any[]>([]);
@@ -95,6 +97,17 @@ const LocationInput = ({
           </button>
         )}
       </div>
+
+      {locationError && (
+        <div className="mt-1 ml-4 flex flex-col gap-1">
+          <p className="text-[9px] font-bold text-rose-500 uppercase tracking-tighter leading-tight">
+            {locationError}
+          </p>
+          <button onClick={onUseCurrentLocation} className="text-[9px] font-black text-[var(--color-primary)] uppercase underline text-left">
+            Retry Location
+          </button>
+        </div>
+      )}
       
       {showSuggestions && (searching || suggestions.length > 0) && (
         <div className="absolute z-50 top-[100%] left-0 right-0 bg-surface border border-subtle rounded-3xl mt-2 shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2">
@@ -199,6 +212,106 @@ export default function App() {
   
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
+  const [locationRequestError, setLocationRequestError] = useState<string | null>(null);
+  const [permissionDenied, setPermissionDenied] = useState(false);
+  const locationRequestAttempted = useRef(false);
+
+  /**
+   * Enhanced Geolocation with WebView/Android Compatibility
+   */
+  const handleGetCurrentLocation = (isSilent = false) => {
+    if (!navigator.geolocation) {
+      if (!isSilent) alert("Geolocation not supported by your device.");
+      return;
+    }
+
+    if (isSilent && permissionDenied) {
+        return; // Don't retry silently if already denied
+    }
+
+    if (!isSilent) setIsLocating(true);
+    setLocationRequestError(null);
+
+    const geoOptions = {
+      enableHighAccuracy: true,
+      timeout: 15000,
+      maximumAge: 0
+    };
+
+    console.log("Requesting current position with options:", geoOptions);
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        console.log("Position acquired:", latitude, longitude);
+        
+        setPostFromCoords({ lat: latitude, lon: longitude });
+        setPermissionDenied(false); // Reset if successful
+        
+        try {
+          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
+          const data = await res.json();
+          if (data && data.display_name) {
+             setPostFrom(data.display_name);
+             console.log("Geocoding success:", data.display_name);
+          }
+        } catch (err) {
+          console.error("Geocoding error:", err);
+        } finally {
+          setIsLocating(false);
+        }
+      },
+      (err) => {
+        setIsLocating(false);
+        let errorMsg = "Unable to get location.";
+        
+        switch (err.code) {
+          case err.PERMISSION_DENIED:
+            errorMsg = "Location permission is required. Please enable location in app settings.";
+            setPermissionDenied(true);
+            // Only warn if it was a user initiated action or first load
+            if (!isSilent) console.warn("Geolocation Error: Permission Denied");
+            break;
+          case err.POSITION_UNAVAILABLE:
+            errorMsg = "Location information is unavailable. Check your GPS.";
+            console.warn("Geolocation Error: Position Unavailable");
+            break;
+          case err.TIMEOUT:
+            errorMsg = "Location request timed out. Please try again.";
+            console.warn("Geolocation Error: Timeout");
+            break;
+          default:
+            console.error("Geolocation Error: Unknown", err.message);
+            break;
+        }
+
+        setLocationRequestError(errorMsg);
+        if (!isSilent) {
+           alert(errorMsg);
+        }
+      },
+      geoOptions
+    );
+  };
+
+  // Request location automatically on app load, but only once
+  useEffect(() => {
+    if (!locationRequestAttempted.current) {
+        locationRequestAttempted.current = true;
+        // Check permissions API if available to avoid unnecessary prompts that might get blocked
+        if (navigator.permissions && navigator.permissions.query) {
+            navigator.permissions.query({ name: 'geolocation' }).then((result) => {
+                if (result.state === 'granted' || result.state === 'prompt') {
+                    handleGetCurrentLocation(true);
+                }
+            }).catch(() => {
+                handleGetCurrentLocation(true);
+            });
+        } else {
+            handleGetCurrentLocation(true);
+        }
+    }
+  }, []);
 
   // Background Location Tracking for Drivers
   useEffect(() => {
@@ -211,7 +324,11 @@ export default function App() {
           });
         },
         null,
-        { enableHighAccuracy: true }
+        { 
+          enableHighAccuracy: true,
+          timeout: 15000,
+          maximumAge: 0
+        }
       );
       return () => navigator.geolocation.clearWatch(watchId);
     }
@@ -326,30 +443,6 @@ export default function App() {
     }
   };
 
-  const handleGetCurrentLocation = () => {
-    if (!navigator.geolocation) { alert("Geolocation not supported."); return; }
-    setIsLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
-        setPostFromCoords({ lat: latitude, lon: longitude });
-        try {
-          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
-          const data = await res.json();
-          if (data && data.display_name) {
-             setPostFrom(data.display_name);
-          }
-        } catch (err) {
-          console.error("Geocoding error:", err);
-        } finally {
-          setIsLocating(false);
-        }
-      },
-      (err) => { setIsLocating(false); alert("Please enable GPS for accurate pickup."); },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
-  };
-
   const handlePublishRide = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || user.driverVerificationStatus !== 'VERIFIED') return;
@@ -441,6 +534,25 @@ export default function App() {
         
         return (
           <div className="p-6 space-y-6 animate-in fade-in pb-32">
+            {/* Permission Denied Banner */}
+            {permissionDenied && (
+                <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl flex items-center justify-between shadow-sm">
+                    <div className="flex items-center gap-3">
+                        <Icons.Target className="w-5 h-5 text-amber-600" />
+                        <div>
+                            <p className="text-xs font-bold text-amber-900">Location Disabled</p>
+                            <p className="text-[9px] text-amber-700">Enable location for better experience</p>
+                        </div>
+                    </div>
+                    <button 
+                        onClick={() => handleGetCurrentLocation(false)} 
+                        className="bg-amber-600 text-white px-3 py-2 rounded-xl text-[9px] font-black uppercase active:scale-95 transition-all"
+                    >
+                        Enable
+                    </button>
+                </div>
+            )}
+
             {/* Header */}
             <div className="space-y-1">
               <p className="text-muted text-xs font-bold uppercase tracking-widest">{greeting},</p>
@@ -627,8 +739,9 @@ export default function App() {
                     placeholder="Search pickup..." 
                     value={postFrom} 
                     onChange={(v, lat, lon) => { setPostFrom(v); if(lat) setPostFromCoords({lat, lon: lon!}); }}
-                    onUseCurrentLocation={handleGetCurrentLocation}
+                    onUseCurrentLocation={() => handleGetCurrentLocation(false)}
                     isLocating={isLocating}
+                    locationError={locationRequestError}
                   />
                   <LocationInput 
                     label="Destination" 

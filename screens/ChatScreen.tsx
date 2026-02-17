@@ -82,9 +82,10 @@ export const ChatScreen: React.FC<Props> = ({ booking, currentUser, onBack }) =>
     const textToSend = input;
     setInput(''); // Optimistic clear
 
-    const { error: sendError } = await chatService.sendMessage(chatId, currentUser.id, textToSend);
+    // Refactored call: senderId is no longer passed as it's handled in service for security
+    const { error: sendError } = await chatService.sendMessage(chatId, textToSend);
     if (sendError) {
-        alert("Failed to send message: " + sendError.code);
+        alert("Failed to send message: " + sendError);
         setInput(textToSend); // Restore on failure
     }
   };

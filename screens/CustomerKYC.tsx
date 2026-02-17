@@ -16,6 +16,38 @@ export const CustomerKYC: React.FC<Props> = ({ user, onBack, onSuccess }) => {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isSubmitted, setIsSubmitted] = useState(false);
+
+  // Show pending screen if data exists but not verified, or if just submitted
+  const showPending = (user.kycData && !user.isVerified) || isSubmitted;
+
+  if (showPending) {
+      return (
+          <div className="p-8 h-full flex flex-col items-center justify-center animate-in zoom-in-95">
+            <div className="bg-surface p-8 rounded-[48px] border border-subtle card-shadow text-center space-y-6 relative overflow-hidden w-full">
+                <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-amber-400 to-amber-600"></div>
+                
+                <div className="w-20 h-20 bg-amber-100 rounded-full mx-auto flex items-center justify-center text-amber-600 animate-pulse">
+                    <Icons.Shield className="w-10 h-10" />
+                </div>
+                
+                <h2 className="text-2xl font-black italic uppercase text-main tracking-tighter">Verification Pending</h2>
+                <p className="text-muted text-xs font-medium leading-relaxed">
+                    Your Identity proof has been submitted. We are currently verifying your Aadhaar details.
+                </p>
+                
+                <div className="bg-surface-alt p-4 rounded-2xl border border-subtle">
+                     <p className="text-[10px] font-black text-muted uppercase tracking-widest mb-2">Estimated Time</p>
+                     <p className="text-sm font-bold text-main">~ 2 Hours</p>
+                </div>
+
+                <button onClick={onBack} className="w-full bg-surface-alt text-main py-5 rounded-2xl font-black text-[10px] uppercase tracking-widest border border-subtle hover:bg-subtle transition-all">
+                    Back to Profile
+                </button>
+            </div>
+          </div>
+      );
+  }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const selectedFile = e.target.files?.[0];
@@ -69,14 +101,18 @@ export const CustomerKYC: React.FC<Props> = ({ user, onBack, onSuccess }) => {
     if (error) {
         setUploadError("Failed to verify identity. Please try again.");
     } else {
-        onSuccess();
+        setIsSubmitted(true);
+        // Delay onSuccess to let the user see the pending screen briefly 
+        // before potentially being redirected by the parent component
+        setTimeout(() => {
+            onSuccess();
+        }, 2000);
     }
   };
 
   return (
     <div className="p-8 space-y-8 animate-in slide-in-from-bottom-10 h-full flex flex-col">
        <div className="flex items-center gap-4">
-        {/* If user is not verified, they shouldn't go back easily if this is mandatory onboarding */}
         <button onClick={onBack} className="bg-surface p-3 rounded-xl border border-subtle text-main hover:bg-subtle transition-all">←</button>
         <h2 className="text-xl font-black italic uppercase text-main">Mandatory KYC</h2>
       </div>
@@ -98,7 +134,7 @@ export const CustomerKYC: React.FC<Props> = ({ user, onBack, onSuccess }) => {
                     onChange={e => setAadhaar(e.target.value)} 
                     placeholder="XXXX XXXX XXXX" 
                     className="w-full bg-surface-alt p-5 rounded-[24px] font-bold text-main border border-subtle outline-none focus:border-[var(--color-primary)]"
-                    maxLength={14} // Allow for spaces
+                    maxLength={14} 
                     required
                 />
             </div>

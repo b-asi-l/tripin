@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+
+import React, { useState, useEffect } from 'react';
 import { Trip, User, Booking } from '../types';
 import { Icons } from '../constants';
 
@@ -9,37 +10,141 @@ interface Props {
   onPaymentSuccess: (booking: Booking, method: string) => void;
 }
 
+// Global Razorpay declaration for TypeScript
+declare global {
+  interface Window {
+    Razorpay: any;
+  }
+}
+
 export const PaymentScreen: React.FC<Props> = ({ trip, user, onBack, onPaymentSuccess }) => {
   const [processing, setProcessing] = useState(false);
-  const [waitingForPayment, setWaitingForPayment] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<'WALLET' | 'RAZORPAY'>('WALLET');
+  const [paymentStatus, setPaymentStatus] = useState<'IDLE' | 'PENDING' | 'VERIFYING' | 'FAILED'>('IDLE');
 
-  const RAZORPAY_LINK = "https://razorpay.me/@basilmathew4596";
   const totalAmount = trip.pricePerSeat + 5;
+  // Live/Test Key provided by user
+  const RAZORPAY_KEY = "rzp_test_SH8RsgQgXo9DTM"; 
 
-  const handlePay = () => {
+  // Ensure Razorpay script is loaded
+  useEffect(() => {
+    if (!window.Razorpay) {
+      const script = document.createElement('script');
+      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+      script.async = true;
+      document.body.appendChild(script);
+    }
+  }, []);
+
+  const handleWalletPay = () => {
+    if (user.balance < totalAmount) {
+      alert("Insufficient wallet balance. Please Top Up.");
+      return;
+    }
     setProcessing(true);
+    setPaymentStatus('VERIFYING');
     
-    if (paymentMethod === 'RAZORPAY') {
-        // Direct to Payment Page logic
-        window.open(RAZORPAY_LINK, '_blank');
-        setWaitingForPayment(true);
-        setProcessing(false);
+    // Wallet simulation
+    setTimeout(() => {
+      confirmBooking('WALLET');
+    }, 1500);
+  };
+
+  const handleRazorpayPay = () => {
+    if (!RAZORPAY_KEY) {
+        alert("Payment configuration missing. Please check API Key.");
         return;
     }
 
-    // Wallet simulation
-    setTimeout(() => {
-      confirmBooking();
-    }, 2000);
+    if (typeof window.Razorpay === 'undefined') {
+        alert("Payment gateway not loaded. Check your internet connection.");
+        return;
+    }
+
+    setProcessing(true);
+    setPaymentStatus('PENDING');
+
+    const options = {
+      key: RAZORPAY_KEY,
+      amount: totalAmount * 100, // Amount in paise
+      currency: "INR",
+      name: "TripIn Kerala",
+      description: `Ride: ${trip.from.split(',')[0]} to ${trip.to.split(',')[0]}`,
+      image: "https://api.dicebear.com/7.x/avataaars/svg?seed=TripIn",
+      
+      // Success Handler
+      handler: function (response: any) {
+        console.log("Razorpay Success:", response);
+        // Explicitly check for payment ID to confirm success
+        if (response.razorpay_payment_id) {
+            setPaymentStatus('VERIFYING');
+            // Slight delay for UX before transitioning
+            setTimeout(() => {
+                confirmBooking('RAZORPAY');
+            }, 1000);
+        } else {
+            handleFailure({ error: { description: "Payment verification failed" } });
+        }
+      },
+      
+      prefill: {
+        name: user.name,
+        email: user.email || "support@tripin.dev",
+        contact: user.phone || ""
+      },
+      notes: {
+        trip_id: trip.id,
+        user_id: user.id
+      },
+      theme: {
+        color: "#16A34A"
+      },
+      // Modal Close Handler
+      modal: {
+        ondismiss: function () {
+          setPaymentStatus((prev) => {
+              // Only trigger failure if we aren't already verifying a success
+              if (prev !== 'VERIFYING') {
+                  setProcessing(false);
+                  alert("Payment cancelled. Ride booking aborted.");
+                  return 'FAILED';
+              }
+              return prev;
+          });
+        }
+      }
+    };
+
+    try {
+      const rzp = new window.Razorpay(options);
+      
+      // Failure Handler
+      rzp.on('payment.failed', function (response: any) {
+          handleFailure(response);
+      });
+      
+      rzp.open();
+    } catch (e) {
+      console.error("Razorpay init error:", e);
+      setProcessing(false);
+      setPaymentStatus('IDLE');
+      alert("Error initializing payment gateway.");
+    }
   };
 
-  const confirmBooking = () => {
-      const mockBooking: Booking = {
+  const handleFailure = (response: any) => {
+      console.error("Payment Failed:", response);
+      setPaymentStatus('FAILED');
+      setProcessing(false);
+      // Automatic Cancellation Alert
+      alert(`Ride Booking Cancelled: ${response.error?.description || "Payment failed"}`);
+  };
+
+  const confirmBooking = (method: string) => {
+      const confirmedBooking: Booking = {
         id: 'bk_' + Date.now(),
         tripId: trip.id || 'temp',
         userId: user.id,
-        driverId: trip.ownerId, // Added for Firestore persistence
+        driverId: trip.ownerId,
         ownerName: trip.ownerName,
         ownerAvatar: trip.ownerAvatar,
         amount: trip.pricePerSeat,
@@ -48,42 +153,25 @@ export const PaymentScreen: React.FC<Props> = ({ trip, user, onBack, onPaymentSu
         from: trip.from,
         to: trip.to
       };
-      onPaymentSuccess(mockBooking, paymentMethod);
+      onPaymentSuccess(confirmedBooking, method);
   };
 
-  if (waitingForPayment) {
-    return (
-      <div className="p-8 space-y-8 animate-in zoom-in-95 h-full flex flex-col justify-center items-center">
-         <div className="bg-surface p-8 rounded-[40px] border border-subtle card-shadow space-y-6 w-full text-center">
-            <div className="w-20 h-20 bg-blue-100 rounded-full mx-auto flex items-center justify-center text-[#3395ff] animate-pulse">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+  if (paymentStatus === 'VERIFYING') {
+      return (
+        <div className="p-8 space-y-8 animate-in zoom-in-95 h-full flex flex-col justify-center items-center">
+            <div className="bg-surface p-10 rounded-[48px] border border-subtle card-shadow space-y-6 w-full text-center">
+                <div className="w-20 h-20 border-4 border-emerald-100 border-t-emerald-600 rounded-full mx-auto animate-spin" />
+                <h2 className="text-xl font-black italic uppercase text-main">Securing Ride</h2>
+                <p className="text-muted text-[10px] font-bold uppercase tracking-widest">Payment verified. Confirming with driver...</p>
             </div>
-            <h2 className="text-xl font-black italic uppercase text-main">Complete Payment</h2>
-            <p className="text-muted text-sm font-medium">We've opened the Razorpay secure payment page in a new tab. Please complete the transaction there.</p>
-            
-            <div className="space-y-3 pt-4">
-                <button 
-                    onClick={confirmBooking}
-                    className="w-full bg-[#3395ff] text-white py-5 rounded-[24px] font-black text-xs uppercase tracking-widest shadow-xl shadow-blue-500/20 active:scale-95 transition-all"
-                >
-                    I Have Paid
-                </button>
-                <button 
-                    onClick={() => setWaitingForPayment(false)}
-                    className="w-full bg-surface-alt text-muted py-5 rounded-[24px] font-black text-xs uppercase tracking-widest border border-subtle active:scale-95 transition-all"
-                >
-                    Cancel / Retry
-                </button>
-            </div>
-         </div>
-      </div>
-    );
+        </div>
+      );
   }
 
   return (
     <div className="p-8 space-y-8 animate-in slide-in-from-right-8 h-full flex flex-col">
       <div className="flex items-center gap-4">
-        <button onClick={onBack} className="bg-surface p-3 rounded-xl border border-subtle text-main hover:bg-subtle transition-all">
+        <button onClick={onBack} disabled={processing} className="bg-surface p-3 rounded-xl border border-subtle text-main hover:bg-subtle transition-all disabled:opacity-50">
           ←
         </button>
         <h2 className="text-xl font-black italic uppercase text-main">Checkout</h2>
@@ -93,7 +181,10 @@ export const PaymentScreen: React.FC<Props> = ({ trip, user, onBack, onPaymentSu
         <div className="space-y-4">
             <h3 className="text-[10px] font-black uppercase text-muted tracking-widest">Trip Summary</h3>
             <div className="flex justify-between items-center border-b border-subtle pb-4">
-                <span className="text-sm font-bold text-main">{trip.from.split(',')[0]} → {trip.to.split(',')[0]}</span>
+                <div className="space-y-1">
+                   <p className="text-sm font-bold text-main">{trip.from.split(',')[0]} → {trip.to.split(',')[0]}</p>
+                   <p className="text-[10px] text-muted font-bold uppercase tracking-tighter">{trip.ownerName}'s Pool</p>
+                </div>
                 <span className="text-sm font-bold text-main">₹{trip.pricePerSeat}</span>
             </div>
             <div className="flex justify-between items-center border-b border-subtle pb-4">
@@ -106,52 +197,59 @@ export const PaymentScreen: React.FC<Props> = ({ trip, user, onBack, onPaymentSu
             </div>
         </div>
 
-        <div className="mt-8 space-y-4">
-             <h3 className="text-[10px] font-black uppercase text-muted tracking-widest">Payment Method</h3>
+        <div className="mt-8 space-y-4 flex-1">
+             <h3 className="text-[10px] font-black uppercase text-muted tracking-widest">Choose Payment Method</h3>
              
              {/* Wallet Option */}
-             <div 
-                onClick={() => setPaymentMethod('WALLET')}
-                className={`bg-surface-alt p-4 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${paymentMethod === 'WALLET' ? 'border-[var(--color-primary)] ring-1 ring-[var(--color-primary)]' : 'border-subtle hover:border-muted'}`}
+             <button 
+                onClick={handleWalletPay}
+                disabled={processing || user.balance < totalAmount}
+                className={`w-full bg-surface-alt p-6 rounded-[28px] border-2 flex items-center justify-between transition-all active:scale-95 ${user.balance >= totalAmount ? 'border-subtle hover:border-[var(--color-primary)]' : 'opacity-50 grayscale'}`}
              >
-                 <div className="flex items-center gap-3">
-                     <div className="w-8 h-8 rounded-full bg-[var(--color-primary)]/20 flex items-center justify-center text-[var(--color-primary)] font-black text-xs">W</div>
-                     <span className="text-sm font-bold text-main">TripIn Wallet (₹{user.balance})</span>
+                 <div className="flex items-center gap-4">
+                     <div className="w-10 h-10 rounded-full bg-[var(--color-primary)] text-white flex items-center justify-center shadow-lg">
+                        <Icons.Wallet className="w-5 h-5" />
+                     </div>
+                     <div className="text-left">
+                         <p className="text-xs font-black uppercase text-main">TripIn Wallet</p>
+                         <p className="text-[9px] font-bold text-muted uppercase tracking-tight">Available: ₹{user.balance}</p>
+                     </div>
                  </div>
-                 <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${paymentMethod === 'WALLET' ? 'border-[var(--color-primary)]' : 'border-muted'}`}>
-                    {paymentMethod === 'WALLET' && <div className="w-2 h-2 rounded-full bg-[var(--color-primary)]" />}
+                 <div className="text-[var(--color-primary)]">
+                    <Icons.Check className="w-5 h-5 opacity-40" />
                  </div>
-             </div>
+             </button>
 
              {/* Razorpay Option */}
-             <div 
-                onClick={() => setPaymentMethod('RAZORPAY')}
-                className={`bg-surface-alt p-4 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${paymentMethod === 'RAZORPAY' ? 'border-[#3395ff] ring-1 ring-[#3395ff]' : 'border-subtle hover:border-muted'}`}
+             <button 
+                onClick={handleRazorpayPay}
+                disabled={processing}
+                className="w-full bg-surface-alt p-6 rounded-[28px] border-2 border-subtle hover:border-[#3395ff] transition-all active:scale-95 flex items-center justify-between"
              >
-                 <div className="flex items-center gap-3">
-                     <div className="w-8 h-8 rounded-full bg-[#3395ff]/20 flex items-center justify-center text-[#3395ff] font-black text-xs">R</div>
-                     <span className="text-sm font-bold text-main">Razorpay / UPI</span>
+                 <div className="flex items-center gap-4">
+                     <div className="w-10 h-10 rounded-full bg-[#3395ff] text-white flex items-center justify-center shadow-lg">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+                     </div>
+                     <div className="text-left">
+                         <p className="text-xs font-black uppercase text-main">Razorpay / UPI</p>
+                         <p className="text-[9px] font-bold text-muted uppercase tracking-tight">Cards, UPI, Netbanking</p>
+                     </div>
                  </div>
-                 <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${paymentMethod === 'RAZORPAY' ? 'border-[#3395ff]' : 'border-muted'}`}>
-                    {paymentMethod === 'RAZORPAY' && <div className="w-2 h-2 rounded-full bg-[#3395ff]" />}
+                 <div className="text-[#3395ff]">
+                    {processing && paymentStatus === 'PENDING' ? (
+                       <div className="w-5 h-5 border-2 border-[#3395ff] border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                       <Icons.Check className="w-5 h-5 opacity-40" />
+                    )}
                  </div>
-             </div>
+             </button>
         </div>
 
-        <div className="mt-auto">
-            <button 
-                onClick={handlePay}
-                disabled={processing || (paymentMethod === 'WALLET' && user.balance < totalAmount)}
-                className={`w-full text-white py-6 rounded-[30px] font-black text-xs uppercase tracking-widest shadow-2xl transition-all active:scale-95 disabled:opacity-50 disabled:grayscale ${paymentMethod === 'RAZORPAY' ? 'bg-[#3395ff] shadow-blue-500/20' : 'bg-[var(--color-primary)]'}`}
-            >
-                {processing ? 'Processing...' : (paymentMethod === 'RAZORPAY' ? `Pay ₹${totalAmount} via Razorpay` : `Pay ₹${totalAmount}`)}
-            </button>
-            {paymentMethod === 'WALLET' && user.balance < totalAmount && (
-                <p className="text-rose-500 text-[9px] font-bold text-center mt-4 uppercase tracking-wider">Insufficient Balance</p>
-            )}
-             {paymentMethod === 'RAZORPAY' && (
-                <p className="text-muted text-[9px] font-bold text-center mt-4 uppercase tracking-wider">Secure Payment via Razorpay Link</p>
-            )}
+        <div className="mt-auto space-y-4">
+            <div className="flex items-center justify-center gap-2 p-4 bg-emerald-50 rounded-2xl border border-emerald-100">
+                <Icons.Shield className="w-4 h-4 text-emerald-600" />
+                <p className="text-[9px] font-black text-emerald-700 uppercase tracking-widest leading-none">Safe & Secure Payment</p>
+            </div>
         </div>
       </div>
     </div>

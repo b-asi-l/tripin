@@ -25,7 +25,8 @@ import {
   orderBy,
   limit,
   writeBatch,
-  increment
+  increment,
+  serverTimestamp
 } from "firebase/firestore";
 import { 
   getStorage, 
@@ -626,7 +627,7 @@ export const chatService = {
               participants: participants,
               createdAt: Date.now(),
               lastMessage: "",
-              updatedAt: Date.now()
+              updatedAt: serverTimestamp()
           });
        }
        return { success: true };
@@ -636,25 +637,47 @@ export const chatService = {
      }
   },
 
-  sendMessage: async (chatId: string, senderId: string, text: string) => {
+  // Refactored Send Message Function
+  sendMessage: async (chatId: string, text: string) => {
+    console.log(`sendMessage started for chatId: ${chatId}`);
+
+    // 1. Validate Authentication
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      console.error("sendMessage error: User is not authenticated.");
+      return { success: false, error: "Authentication required" };
+    }
+
+    // 2. Prevent Empty Messages
+    const trimmedText = text.trim();
+    if (!trimmedText) {
+      console.warn("sendMessage warned: Attempted to send an empty message.");
+      return { success: false, error: "Empty messages are not allowed" };
+    }
+
     try {
-      // Add message to subcollection
-      await addDoc(collection(db, "chats", chatId, "messages"), {
-        senderId,
-        text,
-        timestamp: Date.now()
-      });
-      
-      // Update parent chat with last message
-      await updateDoc(doc(db, "chats", chatId), {
-        lastMessage: text,
-        updatedAt: Date.now()
+      // 3. Create message document in subcollection
+      const messageCollectionRef = collection(db, "chats", chatId, "messages");
+      const messageDocRef = await addDoc(messageCollectionRef, {
+        senderId: currentUser.uid,
+        text: trimmedText,
+        timestamp: serverTimestamp() // Requirement: serverTimestamp
       });
 
+      console.log(`Message document created with ID: ${messageDocRef.id}`);
+
+      // 4. Update parent chat document with latest info
+      const chatDocRef = doc(db, "chats", chatId);
+      await updateDoc(chatDocRef, {
+        lastMessage: trimmedText,
+        updatedAt: serverTimestamp()
+      });
+
+      console.log("Chat parent document updated successfully.");
       return { success: true, error: null };
     } catch (error: any) {
-      console.error("Error sending message:", error);
-      return { success: false, error };
+      console.error("sendMessage exception:", error);
+      return { success: false, error: error.message || "Unknown error occurred" };
     }
   },
 
