@@ -26,21 +26,17 @@ export const CustomerKYC: React.FC<Props> = ({ user, onBack, onSuccess }) => {
           <div className="p-8 h-full flex flex-col items-center justify-center animate-in zoom-in-95">
             <div className="bg-surface p-8 rounded-[48px] border border-subtle card-shadow text-center space-y-6 relative overflow-hidden w-full">
                 <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-amber-400 to-amber-600"></div>
-                
                 <div className="w-20 h-20 bg-amber-100 rounded-full mx-auto flex items-center justify-center text-amber-600 animate-pulse">
                     <Icons.Shield className="w-10 h-10" />
                 </div>
-                
                 <h2 className="text-2xl font-black italic uppercase text-main tracking-tighter">Verification Pending</h2>
                 <p className="text-muted text-xs font-medium leading-relaxed">
                     Your Identity proof has been submitted. We are currently verifying your Aadhaar details.
                 </p>
-                
                 <div className="bg-surface-alt p-4 rounded-2xl border border-subtle">
                      <p className="text-[10px] font-black text-muted uppercase tracking-widest mb-2">Estimated Time</p>
                      <p className="text-sm font-bold text-main">~ 2 Hours</p>
                 </div>
-
                 <button onClick={onBack} className="w-full bg-surface-alt text-main py-5 rounded-2xl font-black text-[10px] uppercase tracking-widest border border-subtle hover:bg-subtle transition-all">
                     Back to Profile
                 </button>
@@ -62,14 +58,12 @@ export const CustomerKYC: React.FC<Props> = ({ user, onBack, onSuccess }) => {
     setLoading(true);
     setUploadError(null);
 
-     // Pre-flight check
      if (!user || !user.id) {
         setUploadError("Session invalid. Please login again.");
         setLoading(false);
         return;
     }
 
-    // Aadhaar Validation
     if (!/^\d{12}$/.test(aadhaar.replace(/\s/g, ''))) {
         setUploadError("Please enter a valid 12-digit Aadhaar number.");
         setLoading(false);
@@ -78,16 +72,13 @@ export const CustomerKYC: React.FC<Props> = ({ user, onBack, onSuccess }) => {
 
     let docUrl = '';
     if (file) {
-        // Upload file to specific Aadhaar folder in Storage
         const path = `aadhaar_documents/${user.id}/aadhaar_${Date.now()}`;
         const { url, error } = await storageService.uploadKYC(file, path);
-        
         if (error) {
             setUploadError(error);
             setLoading(false);
             return;
         }
-
         if (url) docUrl = url;
     } else {
         setUploadError("Please select a photo of your Aadhaar card.");
@@ -102,8 +93,7 @@ export const CustomerKYC: React.FC<Props> = ({ user, onBack, onSuccess }) => {
         setUploadError("Failed to verify identity. Please try again.");
     } else {
         setIsSubmitted(true);
-        // Delay onSuccess to let the user see the pending screen briefly 
-        // before potentially being redirected by the parent component
+        // Sequential Flow: After Aadhaar, if driver, App.tsx will handle redirection to DriverKYC via re-fetching profile
         setTimeout(() => {
             onSuccess();
         }, 2000);
@@ -114,7 +104,7 @@ export const CustomerKYC: React.FC<Props> = ({ user, onBack, onSuccess }) => {
     <div className="p-8 space-y-8 animate-in slide-in-from-bottom-10 h-full flex flex-col">
        <div className="flex items-center gap-4">
         <button onClick={onBack} className="bg-surface p-3 rounded-xl border border-subtle text-main hover:bg-subtle transition-all">←</button>
-        <h2 className="text-xl font-black italic uppercase text-main">Mandatory KYC</h2>
+        <h2 className="text-xl font-black italic uppercase text-main">Identity Verification</h2>
       </div>
 
       <div className="bg-surface p-8 rounded-[40px] border border-subtle card-shadow space-y-6">
@@ -141,28 +131,17 @@ export const CustomerKYC: React.FC<Props> = ({ user, onBack, onSuccess }) => {
 
             <div className="space-y-2">
                 <label className="text-[10px] font-black uppercase text-muted ml-4 tracking-widest">Aadhaar Card Photo</label>
-                
                 {previewUrl ? (
                     <div className="relative w-full h-48 rounded-[24px] overflow-hidden border border-subtle group">
                         <img src={previewUrl} className="w-full h-full object-cover" />
                         <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all">
                              <p className="text-white font-bold text-xs uppercase">Click to Change</p>
                         </div>
-                        <input 
-                            type="file" 
-                            accept="image/*"
-                            onChange={handleFileChange}
-                            className="absolute inset-0 opacity-0 cursor-pointer"
-                        />
+                        <input type="file" accept="image/*" onChange={handleFileChange} className="absolute inset-0 opacity-0 cursor-pointer" />
                     </div>
                 ) : (
                     <div className="relative">
-                        <input 
-                            type="file" 
-                            accept="image/*"
-                            onChange={handleFileChange}
-                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                        />
+                        <input type="file" accept="image/*" onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
                         <div className="w-full bg-surface-alt p-8 rounded-[24px] border border-dashed border-subtle flex flex-col items-center justify-center gap-2 text-muted">
                             <Icons.Plus />
                             <span className="text-[10px] font-black uppercase">Tap to Upload Image</span>

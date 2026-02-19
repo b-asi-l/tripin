@@ -1,6 +1,7 @@
 
 export type ViewState = 
 | 'LOGIN' 
+| 'EMAIL_VERIFICATION'
 | 'PROFILE_SETUP'
 | 'HOME' 
 | 'SEARCH' 
@@ -14,9 +15,12 @@ export type ViewState =
 | 'DRIVER_KYC'
 | 'ADMIN_PANEL'
 | 'LIVE_TRACKING'
-| 'TOP_UP'
 | 'EARNINGS'
-| 'MY_REQUESTS';
+| 'TOPUP'
+| 'ABOUT'
+| 'CONTACT_US'
+| 'TERMS'
+| 'REFUND_POLICY';
 
 export enum VehicleType {
   CAR = 'CAR',
@@ -28,6 +32,16 @@ export enum TripStatus {
   FULL = 'FULL',
   COMPLETED = 'COMPLETED',
   CANCELLED = 'CANCELLED'
+}
+
+export interface DriverTransaction {
+  id: string;
+  driverId: string;
+  amount: number;
+  type: 'RIDE_EARNING' | 'WITHDRAWAL';
+  description: string;
+  status: 'COMPLETED' | 'PROCESSING' | 'FAILED';
+  createdAt: number;
 }
 
 export interface User {
@@ -42,8 +56,16 @@ export interface User {
   driverVerificationStatus: 'NONE' | 'PENDING' | 'VERIFIED' | 'REJECTED';
   co2Saved: number;
   moneySaved: number;
-  balance: number;
-  earnings: number; 
+  fuelSaved: number;
+  walletBalance: number;
+  earnings: number;
+  level: number;
+  phone?: string;
+  address?: string;
+  email?: string;
+  sex?: 'Male' | 'Female' | 'Other';
+  bloodGroup?: string;
+  emergencyContact?: string;
   bankDetails?: {
     accountName: string;
     accountNumber: string;
@@ -54,11 +76,6 @@ export interface User {
     aadhaar: string;
     docUrl: string;
   };
-  phone?: string;
-  address?: string;
-  sex?: 'Male' | 'Female' | 'Other';
-  bloodGroup?: string;
-  emergencyContact?: string;
 }
 
 export interface Trip {
@@ -80,19 +97,6 @@ export interface Trip {
   requests: any[];
 }
 
-export interface TripRequest {
-  id: string;
-  tripId: string;
-  passengerId: string;
-  passengerName: string;
-  passengerAvatar: string;
-  driverId: string;
-  status: 'PENDING' | 'ACCEPTED' | 'REJECTED';
-  createdAt: number;
-  tripFrom: string;
-  tripTo: string;
-}
-
 export interface Booking {
   id: string;
   tripId: string;
@@ -100,11 +104,14 @@ export interface Booking {
   driverId: string; 
   ownerName: string;
   ownerAvatar: string;
+  ownerPhone: string;
   amount: number;
-  status: 'CONFIRMED' | 'CANCELLED';
+  status: 'CONFIRMED' | 'CANCELLED' | 'COMPLETED';
+  paymentMethod: 'RAZORPAY' | 'DIRECT';
   date: string;
   from: string;
   to: string;
+  createdAt?: number;
 }
 
 export interface LiveLocation {
@@ -117,15 +124,5 @@ export interface Message {
   senderId: string;
   text: string;
   timestamp: number;
-  isMe?: boolean; // Optional in some contexts, but kept for compatibility
-}
-
-export interface DriverTransaction {
-  id: string;
-  driverId: string;
-  amount: number;
-  type: 'RIDE_EARNING' | 'WITHDRAWAL';
-  description: string;
-  status: 'COMPLETED' | 'PROCESSING';
-  createdAt: number;
+  isMe?: boolean;
 }

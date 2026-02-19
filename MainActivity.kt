@@ -1,3 +1,4 @@
+
 package dev.tripin.app
 
 import android.Manifest
@@ -39,7 +40,7 @@ class MainActivity : AppCompatActivity() {
         checkAndRequestPermissions()
 
         // Load your production URL
-        webView.loadUrl("https://tripinn-99eac.web.app") 
+        webView.loadUrl("https://getripin.in") 
     }
 
     private fun setupWebView() {

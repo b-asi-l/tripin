@@ -8,7 +8,9 @@ import {
   onAuthStateChanged,
   signInAnonymously,
   updateProfile as updateAuthProfile,
-  sendEmailVerification
+  sendEmailVerification,
+  GoogleAuthProvider,
+  signInWithPopup
 } from "firebase/auth";
 import { 
   getFirestore, 
@@ -51,17 +53,6 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const storage = getStorage(app);
 
-const sortAndFilterTrips = (rawTrips: any[]): Trip[] => {
-  return rawTrips
-    .map(t => ({...t, createdAtTime: t.createdAt || Date.now() }))
-    .sort((a, b) => b.createdAtTime - a.createdAtTime);
-};
-
-let manualCallback: ((user: any) => void) | null = null;
-
-/* =========================
-   AUTH SERVICE
-========================= */
 export const authService = {
   signUp: async (email: string, password: string, name: string) => {
     try {
@@ -69,41 +60,32 @@ export const authService = {
       const user = userCredential.user;
       const avatar = `https://api.dicebear.com/7.x/avataaars/svg?seed=${name?.replace(/\s/g, '')}`;
 
-      await updateAuthProfile(user, {
-        displayName: name,
-        photoURL: avatar
-      });
-      
+      await updateAuthProfile(user, { displayName: name, photoURL: avatar });
       await sendEmailVerification(user);
 
-      try {
-        await setDoc(doc(db, "users", user.uid), {
-              id: user.uid,
-              uid: user.uid,
-              name: name,
-              email: email,
-              avatar: avatar,
-              role: "customer",
-              isDriver: false,
-              rating: 5.0,
-              tripsCount: 0,
-              isOnboarded: false,
-              isVerified: false,
-              co2Saved: 0,
-              moneySaved: 0,
-              balance: 0, 
-              earnings: 0,
-              createdAt: Date.now()
-        });
-      } catch (e) {
-        console.error("Firestore Profile Creation Failed:", e);
-      }
+      await setDoc(doc(db, "users", user.uid), {
+            id: user.uid,
+            uid: user.uid,
+            name: name,
+            email: email,
+            avatar: avatar,
+            role: "customer",
+            isDriver: false,
+            rating: 5.0,
+            tripsCount: 0,
+            isOnboarded: false,
+            isVerified: false,
+            co2Saved: 0,
+            moneySaved: 0,
+            fuelSaved: 0,
+            walletBalance: 0,
+            earnings: 0,
+            level: 1,
+            createdAt: Date.now()
+      });
       
-      await signOut(auth);
-
-      return { data: { user: user, session: false }, error: null };
+      return { data: { user: user }, error: null };
     } catch (error: any) {
-      console.error("SignUp Error:", error);
       return { data: null, error: { message: error.message } };
     }
   },
@@ -117,87 +99,45 @@ export const authService = {
     }
   },
 
-  signInGuest: async () => {
+  signInWithGoogle: async () => {
     try {
-      const userCredential = await signInAnonymously(auth);
+      const provider = new GoogleAuthProvider();
+      const userCredential = await signInWithPopup(auth, provider);
       const user = userCredential.user;
-      
-      const guestData = {
-        id: user.uid,
-        uid: user.uid,
-        name: 'Guest Pilot',
-        email: 'guest@tripin.dev',
-        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
-        role: "customer",
-        isDriver: true,
-        rating: 4.9,
-        tripsCount: 42,
-        isOnboarded: true,
-        isVerified: true,
-        driverVerificationStatus: 'VERIFIED',
-        co2Saved: 42,
-        moneySaved: 2500,
-        balance: 1000,
-        earnings: 540,
-        phone: '+91 9999999999',
-        address: 'Technopark, Trivandrum, Kerala',
-        sex: 'Other',
-        createdAt: Date.now()
-      };
-      
-      try {
-        await setDoc(doc(db, "users", user.uid), guestData);
-        try {
-            await setDoc(doc(db, "drivers bank", user.uid), {
-                accountName: 'Guest Pilot',
-                accountNumber: '1234567890',
-                ifsc: 'SBIN0001234',
-                bankName: 'TripIn Bank',
-                updatedAt: Date.now()
-            });
-        } catch (ignored) { }
-        
-        await setDoc(doc(db, "drivers", user.uid), {
-           userId: user.uid,
-           licenseNumber: 'KL-01-GUEST',
-           verificationStatus: 'approved',
-           submittedAt: Date.now()
-        }, { merge: true });
 
-      } catch (firestoreErr: any) {
-        console.warn("Guest setup warning:", firestoreErr.code);
-      }
-
-      if (manualCallback) {
-        manualCallback({
-          uid: user.uid,
-          id: user.uid,
-          email: user.email,
-          displayName: user.displayName,
-          photoURL: user.photoURL,
-          emailVerified: user.emailVerified,
-          isAnonymous: user.isAnonymous
+      const userRef = doc(db, "users", user.uid);
+      const userSnap = await getDoc(userRef);
+      
+      if (!userSnap.exists()) {
+         await setDoc(userRef, {
+              id: user.uid,
+              uid: user.uid,
+              name: user.displayName || 'Google User',
+              email: user.email,
+              avatar: user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
+              role: "customer",
+              isDriver: false,
+              rating: 5.0,
+              tripsCount: 0,
+              isOnboarded: false,
+              isVerified: false,
+              co2Saved: 0,
+              moneySaved: 0,
+              fuelSaved: 0,
+              walletBalance: 0,
+              earnings: 0,
+              level: 1,
+              createdAt: Date.now()
         });
       }
       return { data: { user: user }, error: null };
     } catch (error: any) {
-      console.error("Guest Sign-In Error:", error);
       return { data: null, error: { message: error.message } };
     }
   },
 
-  signOut: async () => {
-    try {
-      await signOut(auth);
-      if (manualCallback) manualCallback(null);
-    } catch (error) {
-      console.error("SignOut Error:", error);
-    }
-  },
-
   onAuthStateChange: (callback: (user: any) => void) => {
-    manualCallback = callback;
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    return onAuthStateChanged(auth, (user) => {
         if (user) {
             callback({
                 uid: user.uid,
@@ -206,115 +146,35 @@ export const authService = {
                 displayName: user.displayName,
                 photoURL: user.photoURL,
                 emailVerified: user.emailVerified,
-                phoneNumber: user.phoneNumber,
-                isAnonymous: user.isAnonymous,
-                providerData: user.providerData
             });
         } else {
             callback(null);
         }
     });
-    return unsubscribe;
   },
 
-  getCurrentUser: async () => {
-      return auth.currentUser;
-  },
-};
-
-/* =========================
-   TRIP SERVICE (RIDES)
-========================= */
-export const tripService = {
-  getAllTrips: async () => {
-    try {
-      const q = query(collection(db, "trips"), where("status", "==", "OPEN"));
-      const querySnapshot = await getDocs(q);
-      const trips: any[] = [];
-      querySnapshot.forEach((doc) => {
-        trips.push({ id: doc.id, ...doc.data() });
-      });
-      return { data: sortAndFilterTrips(trips), error: null };
-    } catch (error: any) {
-      return { data: [], error };
-    }
-  },
-  
-  createTrip: async (tripData: any) => {
-    try {
-      const payload = { ...tripData, createdAt: Date.now() };
-      const docRef = await addDoc(collection(db, "trips"), payload);
-      return { data: { id: docRef.id, ...payload }, error: null };
-    } catch (error: any) {
-      return { data: null, error };
-    }
-  },
-
-  listenToTrips: (callback: (trips: Trip[]) => void) => {
-    const q = query(collection(db, "trips"), where("status", "==", "OPEN"));
-    const unsubscribe = onSnapshot(q, 
-      (querySnapshot) => {
-        const trips: any[] = [];
-        querySnapshot.forEach((doc) => {
-          trips.push({ id: doc.id, ...doc.data() });
-        });
-        callback(sortAndFilterTrips(trips));
-      },
-      (error) => {}
-    );
-    return unsubscribe;
+  signOut: async () => {
+    await signOut(auth);
   }
 };
 
-/* =========================
-   USER SERVICE
-========================= */
 export const userService = {
   getUserProfile: async (uid: string) => {
     try {
-      const userRef = doc(db, "users", uid);
-      const userSnap = await getDoc(userRef);
-      
+      const userSnap = await getDoc(doc(db, "users", uid));
       if (userSnap.exists()) {
         const userData = userSnap.data();
-        let driverData = null;
         let driverVerificationStatus = 'NONE';
-        let bankDetails = null;
-
         try {
-            const driverRef = doc(db, "drivers", uid);
-            const driverSnap = await getDoc(driverRef);
+            const driverSnap = await getDoc(doc(db, "drivers", uid));
             if (driverSnap.exists()) {
-                driverData = driverSnap.data();
-                const status = driverData.verificationStatus;
+                const status = driverSnap.data().verificationStatus;
                 if (status === 'approved') driverVerificationStatus = 'VERIFIED';
                 else if (status === 'pending') driverVerificationStatus = 'PENDING';
                 else if (status === 'rejected') driverVerificationStatus = 'REJECTED';
             }
-        } catch (e) { }
-
-        try {
-            const bankRef = doc(db, "drivers bank", uid);
-            const bankSnap = await getDoc(bankRef);
-            if (bankSnap.exists()) {
-                bankDetails = bankSnap.data();
-            }
-        } catch (e) { }
-
-        if (!bankDetails) {
-            if (userData.bankDetails) bankDetails = userData.bankDetails;
-            else if (driverData && driverData.bankDetails) bankDetails = driverData.bankDetails;
-        }
-
-        return { 
-            data: { 
-                ...userData, 
-                driverData,
-                driverVerificationStatus,
-                bankDetails 
-            }, 
-            error: null 
-        };
+        } catch (e) {}
+        return { data: { ...userData, driverVerificationStatus }, error: null };
       }
       return { data: null, error: "Profile not found" };
     } catch (error: any) {
@@ -324,8 +184,7 @@ export const userService = {
   
   updateProfile: async (uid: string, data: any) => {
     try {
-      const docRef = doc(db, "users", uid);
-      await setDoc(docRef, data, { merge: true });
+      await setDoc(doc(db, "users", uid), data, { merge: true });
       return { data, error: null };
     } catch (error: any) {
       return { data: null, error };
@@ -334,174 +193,32 @@ export const userService = {
 
   topUpBalance: async (uid: string, amount: number) => {
     try {
-      const userRef = doc(db, "users", uid);
-      // Use atomic increment for safety
-      await updateDoc(userRef, { balance: increment(amount) });
-      return { data: amount, error: null };
-    } catch (e: any) {
-      return { data: null, error: e };
-    }
-  }
-};
-
-export const driverService = {
-  recalculateEarnings: async (driverId: string) => {
-    try {
-        const qb = query(collection(db, "bookings"), where("driverId", "==", driverId));
-        const bSnap = await getDocs(qb);
-        let totalIncome = 0;
-        let tripsCount = 0;
-        
-        bSnap.forEach(d => {
-           const b = d.data();
-           if(b.status === 'CONFIRMED' || b.status === 'COMPLETED') {
-              totalIncome += (b.amount || 0) * 0.99;
-              tripsCount++;
-           }
-        });
-
-        const qw = query(collection(db, "users", driverId, "withdrawals"));
-        const wSnap = await getDocs(qw);
-        let totalWithdrawn = 0;
-        
-        wSnap.forEach(d => {
-           const w = d.data();
-           if(w.status !== 'FAILED') {
-              totalWithdrawn += (w.amount || 0);
-           }
-        });
-
-        const netEarnings = totalIncome - totalWithdrawn;
-
-        await updateDoc(doc(db, "users", driverId), {
-            earnings: netEarnings,
-            tripsCount: tripsCount
-        });
-
-        return { earnings: netEarnings, trips: tripsCount };
-    } catch (e) {
-        console.error("Recalculation failed", e);
-        return null;
-    }
-  },
-
-  getEarningsHistory: async (driverId: string) => {
-    const transactions: DriverTransaction[] = [];
-    try {
-      const earningsQ = query(
-        collection(db, "bookings"), 
-        where("driverId", "==", driverId),
-        limit(50)
-      );
-      const earningsSnap = await getDocs(earningsQ);
-      earningsSnap.forEach(doc => {
-        const b = doc.data();
-        if (b.status === 'CONFIRMED' || b.status === 'COMPLETED') {
-             const earningAmount = (b.amount || 0); 
-             transactions.push({
-                id: doc.id,
-                driverId: b.driverId,
-                amount: earningAmount,
-                type: 'RIDE_EARNING',
-                description: `Ride from ${b.from?.split(',')[0] || 'Location'}`,
-                status: 'COMPLETED',
-                createdAt: b.createdAt || Date.now()
-             });
-        }
+      await updateDoc(doc(db, "users", uid), {
+        walletBalance: increment(amount)
       });
-    } catch (e: any) {}
-
-    try {
-      const withdrawalsQ = query(
-        collection(db, "users", driverId, "withdrawals"),
-        limit(50)
-      );
-      const withdrawSnap = await getDocs(withdrawalsQ);
-      withdrawSnap.forEach(doc => {
-         transactions.push({ id: doc.id, ...doc.data() } as DriverTransaction);
-      });
-    } catch (e: any) {}
-
-    transactions.sort((a, b) => b.createdAt - a.createdAt);
-    return { data: transactions, error: null };
-  },
-
-  saveBankDetails: async (userId: string, bankDetails: any) => {
-    try {
-      try {
-        await setDoc(doc(db, "drivers bank", userId), {
-           ...bankDetails,
-           updatedAt: Date.now()
-        }, { merge: true });
-        return { success: true, error: null };
-      } catch (permError: any) {
-         await updateDoc(doc(db, "users", userId), {
-             bankDetails: bankDetails
-         });
-         return { success: true, error: null };
-      }
-    } catch (e: any) {
-       return { success: false, error: e };
-    }
-  },
-
-  redeemEarnings: async (userId: string, amount: number, bankDetails: any) => {
-    try {
-      if (amount <= 0) return { error: "No earnings to redeem" };
-
-      // Use Batch for atomic withdrawal request
-      const batch = writeBatch(db);
-      
-      const withdrawalRef = doc(collection(db, "users", userId, "withdrawals"));
-      batch.set(withdrawalRef, {
-        driverId: userId,
-        amount: amount,
-        type: 'WITHDRAWAL',
-        description: 'Earnings payout to Bank Account',
-        bankDetails, 
-        status: 'PROCESSING',
-        createdAt: Date.now()
-      });
-
-      // Reset displayed earnings immediately (source of truth is recalculated, but this is UX)
-      const userRef = doc(db, "users", userId);
-      batch.update(userRef, { earnings: 0 });
-
-      await batch.commit();
-
-      return { success: true, error: null };
+      return { error: null };
     } catch (error: any) {
-      return { success: false, error };
+      return { error };
     }
   }
 };
 
-/* =========================
-   LOCATION & BOOKING SERVICE
-========================= */
-export const locationService = {
-  updateUserLocation: async (uid: string, location: LiveLocation) => {
-    try {
-      const locationRef = doc(db, "live_locations", uid);
-      await setDoc(locationRef, {
-        ownerId: uid, 
-        ...location,
-        timestamp: Date.now()
-      });
-    } catch (error) {}
-  },
-
-  listenToUserLocation: (uid: string, callback: (location: LiveLocation | null) => void) => {
-    const locationRef = doc(db, "live_locations", uid);
-    return onSnapshot(locationRef, (docSnap) => {
-      if (docSnap.exists()) {
-        callback(docSnap.data() as LiveLocation);
-      } else {
-        callback(null);
-      }
-    }, (error) => {
-       console.warn("Location listener error:", error.message);
+export const tripService = {
+  listenToTrips: (callback: (trips: Trip[]) => void) => {
+    const q = query(collection(db, "trips"), where("status", "==", "OPEN"));
+    return onSnapshot(q, (snapshot) => {
+      const trips = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Trip));
+      callback(trips);
     });
+  },
+  
+  createTrip: async (tripData: any) => {
+    try {
+      const docRef = await addDoc(collection(db, "trips"), { ...tripData, createdAt: Date.now() });
+      return { data: { id: docRef.id, ...tripData }, error: null };
+    } catch (error: any) {
+      return { data: null, error };
+    }
   }
 };
 
@@ -509,325 +226,195 @@ export const bookingService = {
   createBooking: async (bookingData: any, paymentMethod: string) => {
     try {
       const batch = writeBatch(db);
-      
-      // 1. Create Booking Reference
       const bookingRef = doc(collection(db, "bookings"));
       const bookingPayload = {
         ...bookingData,
         id: bookingRef.id,
-        // Crucial: Use String() to ensure these are not undefined/null, which causes rules to fail
-        riderId: String(bookingData.userId), 
-        driverId: String(bookingData.driverId),
+        riderId: bookingData.userId,
+        driverId: bookingData.driverId,
         paymentMethod,
+        status: 'CONFIRMED',
         createdAt: Date.now()
       };
+      
       batch.set(bookingRef, bookingPayload);
 
-      // 2. Create Payment Record
-      const paymentRef = doc(collection(db, "payments"));
-      batch.set(paymentRef, {
-        bookingId: bookingRef.id,
-        riderId: String(bookingData.userId),
-        driverId: String(bookingData.driverId),
-        ownerId: String(bookingData.driverId), 
-        amount: bookingData.amount + 5,
-        method: paymentMethod,
-        status: 'SUCCESS',
-        createdAt: Date.now()
+      if (paymentMethod === 'WALLET') {
+          batch.update(doc(db, "users", bookingData.userId), {
+              walletBalance: increment(-(bookingData.amount + 5))
+          });
+      }
+
+      // Decrement seats AND set status to FULL so it disappears from public pool
+      const tripRef = doc(db, "trips", bookingData.tripId);
+      batch.update(tripRef, { 
+          availableSeats: increment(-1),
+          status: 'FULL' 
       });
 
-      // 3. Wallet Deduction (Atomic)
-      if (paymentMethod === 'WALLET') {
-        const userRef = doc(db, "users", bookingData.userId);
-        const userSnap = await getDoc(userRef);
-        
-        if (userSnap.exists()) {
-            const currentBalance = userSnap.data().balance || 0;
-            const totalCost = bookingData.amount + 5;
-            
-            if (currentBalance < totalCost) {
-                return { data: null, error: { message: "Insufficient wallet balance" } };
-            }
-            
-            batch.update(userRef, {
-                balance: increment(-totalCost),
-                moneySaved: increment(50),
-                co2Saved: increment(2)
-            });
-        }
-      }
-
-      // 4. Update Trip Seats
-      if (bookingData.tripId) {
-          const tripRef = doc(db, "trips", bookingData.tripId);
-          // Only works if security rules allow update (relaxed in new rules)
-          batch.update(tripRef, { availableSeats: increment(-1) });
-      }
+      batch.update(doc(db, "users", bookingData.userId), {
+          tripsCount: increment(1),
+          co2Saved: increment(0.8),
+          moneySaved: increment(bookingData.amount * 0.5)
+      });
 
       await batch.commit();
       return { data: bookingPayload, error: null };
     } catch (error: any) {
-      console.error("Booking Creation Error", error);
       return { data: null, error };
     }
   },
 
   cancelBooking: async (bookingId: string, tripId: string, userId: string, refundAmount: number) => {
     try {
-        const batch = writeBatch(db);
-        
-        // 1. Update Booking Status
-        const bookingRef = doc(db, "bookings", bookingId);
-        batch.update(bookingRef, { status: 'CANCELLED' });
-
-        // 2. Restore Trip Seat
-        const tripRef = doc(db, "trips", tripId);
-        batch.update(tripRef, { availableSeats: increment(1) });
-
-        // 3. Refund User Wallet
-        const userRef = doc(db, "users", userId);
-        batch.update(userRef, { balance: increment(refundAmount) });
-
-        await batch.commit();
-        return { success: true, error: null };
+      const batch = writeBatch(db);
+      batch.update(doc(db, "bookings", bookingId), { status: 'CANCELLED' });
+      batch.update(doc(db, "trips", tripId), { 
+        availableSeats: increment(1),
+        status: 'OPEN' 
+      });
+      
+      const bookingSnap = await getDoc(doc(db, "bookings", bookingId));
+      if (bookingSnap.exists() && bookingSnap.data().paymentMethod !== 'DIRECT') {
+          batch.update(doc(db, "users", userId), { walletBalance: increment(refundAmount) });
+      }
+      
+      await batch.commit();
+      return { success: true };
     } catch (e: any) {
-        return { success: false, error: e };
+      return { success: false, error: e };
+    }
+  },
+
+  getActiveBooking: async (uid: string) => {
+    try {
+      // Adjusted to perform client-side sorting to avoid Firestore index requirement
+      const q = query(
+        collection(db, "bookings"), 
+        where("riderId", "==", uid), 
+        where("status", "==", "CONFIRMED")
+      );
+      
+      const snap = await getDocs(q);
+      if (snap.empty) return null;
+      
+      // Convert to Booking objects
+      const bookings = snap.docs.map(doc => doc.data() as Booking);
+      
+      // Sort in memory (descending by createdAt)
+      bookings.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      
+      // Return the most recent one
+      return bookings[0];
+    } catch (error) {
+      console.error("Error fetching active booking:", error);
+      return null;
     }
   },
 
   getUserBookings: async (uid: string) => {
+    const q = query(collection(db, "bookings"), where("riderId", "==", uid));
+    const snap = await getDocs(q);
+    return snap.docs.map(doc => doc.data() as Booking);
+  }
+};
+
+export const driverService = {
+  recalculateEarnings: async (uid: string) => {
+    const q = query(collection(db, "bookings"), where("driverId", "==", uid), where("status", "==", "CONFIRMED"));
+    const snap = await getDocs(q);
+    let total = 0;
+    snap.forEach(doc => total += (doc.data().amount || 0));
+    await updateDoc(doc(db, "users", uid), { earnings: total });
+    return total;
+  },
+
+  getEarningsHistory: async (uid: string) => {
+    const q = query(collection(db, "driver_transactions"), where("driverId", "==", uid), orderBy("createdAt", "desc"));
+    const snap = await getDocs(q);
+    return { data: snap.docs.map(doc => ({ id: doc.id, ...doc.data() })) };
+  },
+
+  redeemEarnings: async (uid: string, amount: number, bank: any) => {
     try {
-        const q = query(collection(db, "bookings"), where("riderId", "==", uid));
-        const querySnapshot = await getDocs(q);
-        const bookings: any[] = [];
-        querySnapshot.forEach((doc) => {
-            bookings.push({ id: doc.id, ...doc.data() });
-        });
-        return bookings.sort((a, b) => b.createdAt - a.createdAt);
-    } catch (e) {
-        return [];
+      const batch = writeBatch(db);
+      const txRef = doc(collection(db, "driver_transactions"));
+      batch.set(txRef, {
+          driverId: uid, amount, type: 'WITHDRAWAL', status: 'PROCESSING', createdAt: Date.now()
+      });
+      batch.update(doc(db, "users", uid), { earnings: 0 });
+      await batch.commit();
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error };
+    }
+  },
+
+  saveBankDetails: async (uid: string, bank: any) => {
+    try {
+      await updateDoc(doc(db, "users", uid), { bankDetails: bank });
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error };
     }
   }
 };
 
-/* =========================
-   CHAT SERVICE
-========================= */
-export const chatService = {
-  // Checks if the chat document exists for the booking; if not, creates it.
-  ensureChatExists: async (chatId: string, participants: string[]) => {
-     if (!auth.currentUser) return { error: "Not authenticated" };
-     try {
-       const chatRef = doc(db, "chats", chatId);
-       const chatSnap = await getDoc(chatRef);
-       
-       if (!chatSnap.exists()) {
-          console.log("Creating new chat document for:", chatId);
-          await setDoc(chatRef, {
-              participants: participants,
-              createdAt: Date.now(),
-              lastMessage: "",
-              updatedAt: serverTimestamp()
-          });
-       }
-       return { success: true };
-     } catch (e: any) {
-       console.error("Error creating chat:", e);
-       return { error: e };
-     }
+export const locationService = {
+  updateUserLocation: async (uid: string, loc: LiveLocation) => {
+    await setDoc(doc(db, "live_locations", uid), { ...loc, updatedAt: Date.now() });
   },
-
-  // Refactored Send Message Function
-  sendMessage: async (chatId: string, text: string) => {
-    console.log(`sendMessage started for chatId: ${chatId}`);
-
-    // 1. Validate Authentication
-    const currentUser = auth.currentUser;
-    if (!currentUser) {
-      console.error("sendMessage error: User is not authenticated.");
-      return { success: false, error: "Authentication required" };
-    }
-
-    // 2. Prevent Empty Messages
-    const trimmedText = text.trim();
-    if (!trimmedText) {
-      console.warn("sendMessage warned: Attempted to send an empty message.");
-      return { success: false, error: "Empty messages are not allowed" };
-    }
-
-    try {
-      // 3. Create message document in subcollection
-      const messageCollectionRef = collection(db, "chats", chatId, "messages");
-      const messageDocRef = await addDoc(messageCollectionRef, {
-        senderId: currentUser.uid,
-        text: trimmedText,
-        timestamp: serverTimestamp() // Requirement: serverTimestamp
-      });
-
-      console.log(`Message document created with ID: ${messageDocRef.id}`);
-
-      // 4. Update parent chat document with latest info
-      const chatDocRef = doc(db, "chats", chatId);
-      await updateDoc(chatDocRef, {
-        lastMessage: trimmedText,
-        updatedAt: serverTimestamp()
-      });
-
-      console.log("Chat parent document updated successfully.");
-      return { success: true, error: null };
-    } catch (error: any) {
-      console.error("sendMessage exception:", error);
-      return { success: false, error: error.message || "Unknown error occurred" };
-    }
-  },
-
-  listenToMessages: (chatId: string, callback: (messages: any[]) => void, onError?: (error: any) => void) => {
-    if (!chatId) {
-        console.error("listenToMessages called with empty chatId");
-        if (onError) onError({ code: 'invalid-argument', message: 'Chat ID is missing' });
-        return () => {};
-    }
-
-    const q = query(
-      collection(db, "chats", chatId, "messages"),
-      orderBy("timestamp", "asc")
-    );
-    
-    return onSnapshot(q, (snapshot) => {
-      const messages = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      callback(messages);
-    }, (error) => {
-      console.error("Chat listener error:", error.code, error.message);
-      if (onError) onError(error);
+  listenToUserLocation: (uid: string, callback: (loc: LiveLocation | null) => void) => {
+    return onSnapshot(doc(db, "live_locations", uid), (snap) => {
+      if (snap.exists()) callback(snap.data() as LiveLocation);
+      else callback(null);
     });
   }
 };
 
-/* =========================
-   STORAGE & KYC SERVICE
-========================= */
+export const chatService = {
+  ensureChatExists: async (id: string, participants: string[]) => {
+    try {
+      await setDoc(doc(db, "chats", id), { participants, lastMessage: "", updatedAt: serverTimestamp() }, { merge: true });
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error };
+    }
+  },
+  sendMessage: async (id: string, text: string) => {
+    const user = auth.currentUser;
+    if (!user) return { error: "Auth required" };
+    await addDoc(collection(db, "chats", id, "messages"), { senderId: user.uid, text, timestamp: serverTimestamp() });
+    await updateDoc(doc(db, "chats", id), { lastMessage: text, updatedAt: serverTimestamp() });
+    return { success: true };
+  },
+  listenToMessages: (id: string, callback: (msgs: any[]) => void, errorCallback?: (error: any) => void) => {
+    const q = query(collection(db, "chats", id, "messages"), orderBy("timestamp", "asc"));
+    return onSnapshot(q, (snap) => callback(snap.docs.map(d => ({ id: d.id, ...d.data() }))), errorCallback);
+  }
+};
+
 export const storageService = {
   uploadKYC: async (file: File, path: string) => {
-    try {
-      let user = auth.currentUser;
-      
-      if (!user) {
-          for(let i=0; i<5; i++) {
-             await new Promise(r => setTimeout(r, 200));
-             user = auth.currentUser;
-             if(user) break;
-          }
-      }
-
-      if (!user) {
-          return { url: null, error: "Session expired. Please log in again." };
-      }
-      
-      const fileExt = file.name.split('.').pop()?.toLowerCase() || 'jpg';
-      const cleanPath = path.replace(/\.[^/.]+$/, ""); 
-      const finalPath = `${cleanPath}.${fileExt}`;
-      
-      const storageRef = ref(storage, finalPath);
-      
-      const metadata = {
-        contentType: file.type || 'image/jpeg',
-      };
-      
-      const snapshot = await uploadBytes(storageRef, file, metadata);
-      const downloadURL = await getDownloadURL(snapshot.ref);
-      
-      return { url: downloadURL, error: null };
-    } catch (error: any) {
-      console.error("Storage Upload Error:", error);
-      let errorMessage = "Upload failed. Please retry.";
-      if (error.code === 'storage/unauthorized') errorMessage = "Permission denied. (Unauthorized)";
-      if (error.code === 'storage/canceled') errorMessage = "Upload canceled.";
-      if (error.code === 'storage/retry-limit-exceeded') errorMessage = "Poor connection. Upload timed out.";
-      
-      return { url: null, error: `${errorMessage} (${error.code || 'unknown'})` };
-    }
+    const storageRef = ref(storage, path);
+    const snap = await uploadBytes(storageRef, file);
+    const url = await getDownloadURL(snap.ref);
+    return { url, error: null };
   }
 };
 
 export const kycService = {
   submitCustomerKYC: async (uid: string, data: any) => {
-    try {
-        await setDoc(doc(db, "users", uid), {
-            kycData: {
-                ...data,
-                submittedAt: Date.now()
-            },
-            isVerified: false
-        }, { merge: true });
-        return { data, error: null };
-    } catch (e: any) {
-        return { data: null, error: e.message || "KYC Submission failed" };
-    }
+    await updateDoc(doc(db, "users", uid), { kycData: data, isVerified: false });
+    return { error: null };
   },
-
   registerDriverBasicInfo: async (uid: string, data: any) => {
-    try {
-      await setDoc(doc(db, "drivers", uid), {
-         userId: uid,
-         name: data.name,
-         phone: data.phone,
-         address: data.address,
-         sex: data.sex,
-         verificationStatus: 'incomplete', 
-         updatedAt: Date.now()
-      }, { merge: true });
-      return { success: true };
-    } catch (e: any) {
-       return { success: false, error: e };
-    }
+    await setDoc(doc(db, "drivers", uid), { ...data, verificationStatus: 'incomplete' }, { merge: true });
+    return { success: true };
   },
-
   submitDriverKYC: async (uid: string, data: any) => {
-    try {
-        try {
-            await setDoc(doc(db, "drivers", uid), {
-                userId: uid,
-                licenseNumber: data.license,
-                licenseUrl: data.docUrl,
-                verificationStatus: 'pending', 
-                submittedAt: Date.now()
-            }, { merge: true }); 
-        } catch (e: any) {
-             console.error("Driver doc update failed", e);
-             throw new Error("Could not update driver profile.");
-        }
-
-        await addDoc(collection(db, "vehicles"), {
-            driverId: uid,
-            vehicleType: data.vehicleType,
-            registrationNumber: data.vehicleNo,
-            vehicleImageUrl: data.vehicleUrl, 
-            isVerified: false,
-            createdAt: Date.now()
-        });
-
-        await setDoc(doc(db, "users", uid), {
-            isDriver: true
-        }, { merge: true });
-
-        return { data, error: null };
-    } catch (e: any) {
-        return { data: null, error: e.message };
-    }
-  }
-};
-
-export const adminService = {
-  checkIsAdmin: async (uid: string) => {
-    if (uid === 'guest_dev_user') return true;
-    try {
-        const { data } = await userService.getUserProfile(uid);
-        return (data && data.email === 'admin@tripin.dev') || false;
-    } catch(e) {
-        return false;
-    }
+    await updateDoc(doc(db, "drivers", uid), { licenseNumber: data.license, verificationStatus: 'pending' });
+    await updateDoc(doc(db, "users", uid), { isDriver: true });
+    return { error: null };
   }
 };
