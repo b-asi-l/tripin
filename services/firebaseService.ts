@@ -132,17 +132,34 @@ export const userService = {
 
 export const tripService = {
   listenToTrips: (callback: (trips: Trip[]) => void) => {
-    // Initial fetch
+    const mapTrips = (data: any[]) => data.map(t => ({
+        id: t.id,
+        ownerId: t.driver_id,
+        ownerName: t.driver_name || 'Unknown Driver',
+        ownerAvatar: t.driver_avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${t.driver_id}`,
+        ownerRating: 5.0,
+        ownerPhone: 'N/A',
+        from: t.origin?.address || 'Origin',
+        to: t.destination?.address || 'Destination',
+        date: new Date(t.departure_time).toLocaleDateString(),
+        time: new Date(t.departure_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+        vehicleType: t.car_model || 'CAR',
+        pricePerSeat: t.price_per_seat,
+        availableSeats: t.available_seats,
+        status: t.status,
+        description: '',
+        requests: []
+    } as Trip));
+
     supabase.from('trips').select('*').eq('status', 'OPEN').then(({ data }) => {
-      if (data) callback(data as Trip[]);
+      if (data) callback(mapTrips(data));
     });
 
-    // Subscribe to changes
     const channel = supabase
       .channel('public:trips')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'trips', filter: "status=eq.OPEN" }, payload => {
          supabase.from('trips').select('*').eq('status', 'OPEN').then(({ data }) => {
-            if (data) callback(data as Trip[]);
+            if (data) callback(mapTrips(data));
          });
       })
       .subscribe();
@@ -152,7 +169,22 @@ export const tripService = {
   
   createTrip: async (tripData: any) => {
     try {
-      const { data, error } = await supabase.from('trips').insert({ ...tripData, created_at: Date.now() }).select().single();
+      const dbTrip = {
+        driver_id: tripData.ownerId,
+        driver_name: tripData.ownerName,
+        driver_avatar: tripData.ownerAvatar,
+        origin: { address: tripData.from },
+        destination: { address: tripData.to },
+        // Construct departure_time from string
+        departure_time: new Date(`${tripData.date} ${tripData.time}`).getTime() || Date.now(),
+        price_per_seat: tripData.pricePerSeat,
+        available_seats: tripData.availableSeats,
+        car_model: tripData.vehicleType,
+        status: tripData.status || 'OPEN',
+        created_at: Date.now()
+      };
+      
+      const { data, error } = await supabase.from('trips').insert(dbTrip).select().single();
       if (error) throw error;
       return { data, error: null };
     } catch (error: any) {
@@ -174,8 +206,6 @@ export const bookingService = {
         created_at: Date.now()
       };
       
-      // Since we disabled RLS and functions, we do multiple sequential queries here
-      // Ideally this should be an RPC transaction in Supabase
       const { data: booking, error } = await supabase.from('bookings').insert(bookingPayload).select().single();
       if (error) throw error;
 
@@ -235,7 +265,7 @@ export const bookingService = {
   getActiveBooking: async (uid: string) => {
     try {
       const { data, error } = await supabase.from('bookings')
-         .select('*')
+         .select('*, trips(driver_name, driver_avatar, origin, destination, departure_time)')
          .eq('rider_id', uid)
          .eq('status', 'CONFIRMED')
          .order('created_at', { ascending: false })
@@ -243,13 +273,20 @@ export const bookingService = {
          
       if (error || !data || data.length === 0) return null;
       
-      // Map to frontend expected format
       const b = data[0];
+      const tripInfo = b.trips;
+      
       return {
           id: b.id,
           tripId: b.trip_id,
           userId: b.rider_id,
           driverId: b.driver_id,
+          ownerName: tripInfo?.driver_name || 'Driver',
+          ownerAvatar: tripInfo?.driver_avatar || '',
+          ownerPhone: 'N/A',
+          from: tripInfo?.origin?.address || 'Origin',
+          to: tripInfo?.destination?.address || 'Destination',
+          date: new Date(tripInfo?.departure_time || b.created_at).toLocaleDateString(),
           amount: b.amount,
           paymentMethod: b.payment_method,
           status: b.status,
@@ -262,18 +299,31 @@ export const bookingService = {
   },
 
   getUserBookings: async (uid: string) => {
-    const { data } = await supabase.from('bookings').select('*').eq('rider_id', uid);
+    const { data } = await supabase.from('bookings')
+       .select('*, trips(driver_name, driver_avatar, origin, destination, departure_time)')
+       .eq('rider_id', uid);
+       
     if (!data) return [];
-    return data.map(b => ({
+    
+    return data.map(b => {
+      const tripInfo = b.trips;
+      return {
           id: b.id,
           tripId: b.trip_id,
           userId: b.rider_id,
           driverId: b.driver_id,
+          ownerName: tripInfo?.driver_name || 'Driver',
+          ownerAvatar: tripInfo?.driver_avatar || '',
+          ownerPhone: 'N/A',
+          from: tripInfo?.origin?.address || 'Origin',
+          to: tripInfo?.destination?.address || 'Destination',
+          date: new Date(tripInfo?.departure_time || b.created_at).toLocaleDateString(),
           amount: b.amount,
           paymentMethod: b.payment_method,
           status: b.status,
           createdAt: b.created_at
-    })) as Booking[];
+      } as Booking;
+    });
   }
 };
 
