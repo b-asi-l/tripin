@@ -20,7 +20,8 @@ export type ViewState =
 | 'ABOUT'
 | 'CONTACT_US'
 | 'TERMS'
-| 'REFUND_POLICY';
+| 'REFUND_POLICY'
+| 'UBER';
 
 export enum VehicleType {
   CAR = 'CAR',

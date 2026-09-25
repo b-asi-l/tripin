@@ -20,45 +20,36 @@ import { LiveTrackingScreen } from './screens/LiveTrackingScreen';
 import { ProfileSetup } from './screens/ProfileSetup';
 import { EarningsScreen } from './screens/EarningsScreen';
 import { TopUpScreen } from './screens/TopUpScreen';
+import { UberRequestScreen } from './screens/UberRequestScreen';
 
-declare const L: any;
+import { MapContainer as LeafletMap, TileLayer, Marker } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+import L from 'leaflet';
 
-const MapContainer = ({ lat, lng }: { lat: number, lng: number }) => {
-  const mapRef = useRef<HTMLDivElement>(null);
-  const mapInstance = useRef<any>(null);
-  const markerInstance = useRef<any>(null);
+// Fix Leaflet default icon path issues
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+});
 
-  useEffect(() => {
-    if (mapRef.current && typeof L !== 'undefined') {
-      try {
-        mapInstance.current = L.map(mapRef.current, { 
-          zoomControl: false, 
-          attributionControl: false 
-        }).setView([lat, lng], 13);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mapInstance.current);
-        markerInstance.current = L.marker([lat, lng]).addTo(mapInstance.current);
-      } catch (e) {
-        console.error("Leaflet initialization error:", e);
-      }
-    }
-    return () => {
-      if (mapInstance.current) {
-        mapInstance.current.remove();
-        mapInstance.current = null;
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    if (mapInstance.current) {
-      mapInstance.current.setView([lat, lng], 15);
-      if (markerInstance.current) {
-        markerInstance.current.setLatLng([lat, lng]);
-      }
-    }
-  }, [lat, lng]);
-
-  return <div ref={mapRef} className="h-full w-full rounded-[24px]" />;
+const MiniMap = ({ lat, lng }: { lat: number, lng: number }) => {
+  return (
+    <div className="h-full w-full rounded-[24px] overflow-hidden">
+      <LeafletMap 
+        center={[lat, lng]} 
+        zoom={13} 
+        zoomControl={false} 
+        style={{ width: '100%', height: '100%' }}
+      >
+        <TileLayer
+          url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+        />
+        <Marker position={[lat, lng]} />
+      </LeafletMap>
+    </div>
+  );
 };
 
 export default function App() {
@@ -351,6 +342,18 @@ export default function App() {
                 </button>
             </div>
 
+            {/* Uber On-Demand Ride Button */}
+            <button onClick={() => setView('UBER')} className="w-full bg-main text-white p-6 rounded-[40px] shadow-2xl flex items-center justify-between active:scale-95 transition-all mt-4 relative overflow-hidden">
+                <div className="absolute -right-10 -bottom-10 opacity-20"><Icons.Car className="w-40 h-40" /></div>
+                <div className="relative z-10 text-left">
+                    <p className="text-3xl font-black italic uppercase tracking-tighter">Ride Now</p>
+                    <p className="text-xs font-bold text-emerald-400 uppercase tracking-widest mt-1">On-Demand Private Car</p>
+                </div>
+                <div className="relative z-10 w-14 h-14 bg-white/10 rounded-full flex items-center justify-center backdrop-blur-md">
+                    <span className="text-2xl">→</span>
+                </div>
+            </button>
+
             {/* LIVE POOL SECTION (Updated as per user's screenshot) */}
             {activeBooking && (
               <div className="space-y-4 pt-4">
@@ -511,7 +514,7 @@ export default function App() {
           <div className="p-8 space-y-8 pb-40">
             <h2 className="text-4xl font-black italic uppercase text-main italic">Offer Ride</h2>
             <div className="h-48 rounded-[32px] overflow-hidden shadow-lg">
-              <MapContainer lat={currentCoords.lat} lng={currentCoords.lng} />
+              <MiniMap lat={currentCoords.lat} lng={currentCoords.lng} />
             </div>
             <div className="bg-white p-8 rounded-[40px] border border-subtle shadow-xl space-y-6">
                 <div className="space-y-4">
@@ -556,7 +559,7 @@ export default function App() {
           <div className="p-8 space-y-8">
             <button onClick={() => setView('SEARCH')} className="text-muted text-[10px] font-black uppercase tracking-widest">← Back to Search</button>
             <div className="bg-white p-8 rounded-[48px] border border-subtle shadow-2xl space-y-8 relative overflow-hidden">
-                <div className="h-48 rounded-[32px] overflow-hidden"><MapContainer lat={10.8505} lng={76.2711} /></div>
+                <div className="h-48 rounded-[32px] overflow-hidden"><MiniMap lat={10.8505} lng={76.2711} /></div>
                 <div className="flex items-center gap-5">
                     <img src={selectedTrip.ownerAvatar} className="w-24 h-24 rounded-[32px] border-4 border-emerald-50 shadow-lg" />
                     <div className="space-y-1">
@@ -571,6 +574,7 @@ export default function App() {
       case 'LIVE_TRACKING': return user && activeBooking ? <LiveTrackingScreen user={user} booking={activeBooking} onBack={() => setView('RECEIPT')} /> : null;
       case 'EARNINGS': return user ? <EarningsScreen user={user} onBack={() => setView('PROFILE')} onSuccess={refreshUserData} /> : null;
       case 'TOPUP': return user ? <TopUpScreen user={user} onBack={() => setView('PROFILE')} onSuccess={refreshUserData} /> : null;
+      case 'UBER': return user ? <UberRequestScreen user={user} onBack={() => setView('HOME')} onRideAccepted={(booking) => { setActiveBooking(booking); setView('LIVE_TRACKING'); }} /> : null;
       default: return null;
     }
   };
