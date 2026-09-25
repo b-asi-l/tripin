@@ -1,280 +1,393 @@
 import { Trip, Booking, TripStatus, LiveLocation, DriverTransaction } from '../types';
-
-// Mock user data
-const mockUser = {
-  uid: "mock-user-123",
-  id: "mock-user-123",
-  email: "demo@tripin.in",
-  displayName: "Demo User",
-  name: "Demo User",
-  photoURL: "https://api.dicebear.com/7.x/avataaars/svg?seed=DemoUser",
-  avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=DemoUser",
-  role: "customer",
-  isDriver: false,
-  rating: 5.0,
-  tripsCount: 2,
-  isOnboarded: true,
-  isVerified: true,
-  co2Saved: 10,
-  moneySaved: 50,
-  fuelSaved: 5,
-  walletBalance: 1500,
-  earnings: 0,
-  level: 2,
-  createdAt: Date.now()
-};
-
-let authStateCallback: any = null;
-let currentMockUser: any = null;
-
-// Helper to simulate network delay
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+import { supabase } from './supabaseClient';
 
 export const authService = {
   signUp: async (email: string, password: string, name: string) => {
-    await delay(500);
-    currentMockUser = { ...mockUser, email, name, displayName: name };
-    if (authStateCallback) authStateCallback(currentMockUser);
-    return { data: { user: currentMockUser }, error: null };
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: name,
+          }
+        }
+      });
+      if (error) throw error;
+      
+      const avatar = `https://api.dicebear.com/7.x/avataaars/svg?seed=${name?.replace(/\s/g, '')}`;
+      
+      // Update the user record with the avatar (the trigger handles creation)
+      if (data.user) {
+        await supabase.from('users').update({ avatar, name, display_name: name }).eq('id', data.user.id);
+      }
+      
+      return { data: { user: data.user }, error: null };
+    } catch (error: any) {
+      return { data: null, error: { message: error.message } };
+    }
   },
   
   signIn: async (email: string, password: string) => {
-    await delay(500);
-    currentMockUser = { ...mockUser, email };
-    if (authStateCallback) authStateCallback(currentMockUser);
-    return { data: { user: currentMockUser }, error: null };
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      return { data: { user: data.user }, error: null };
+    } catch (error: any) {
+      return { data: null, error: { message: error.message } };
+    }
   },
 
   signInWithGoogle: async () => {
-    await delay(500);
-    currentMockUser = { ...mockUser };
-    if (authStateCallback) authStateCallback(currentMockUser);
-    return { data: { user: currentMockUser }, error: null };
+    try {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+      });
+      if (error) throw error;
+      return { data, error: null };
+    } catch (error: any) {
+      return { data: null, error: { message: error.message } };
+    }
   },
 
   onAuthStateChange: (callback: (user: any) => void) => {
-    authStateCallback = callback;
-    // Call immediately if user already exists
-    if (currentMockUser) {
-        callback(currentMockUser);
-    } else {
-        // Mock checking auth state initially, then auto login for demo
-        setTimeout(() => {
-           currentMockUser = { ...mockUser };
-           callback(currentMockUser);
-        }, 1000);
-    }
-    return () => { authStateCallback = null; };
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session?.user) {
+        callback({
+          uid: session.user.id,
+          id: session.user.id,
+          email: session.user.email,
+          displayName: session.user.user_metadata?.full_name,
+        });
+      } else {
+        callback(null);
+      }
+    });
+    
+    // Also check initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        callback({
+          uid: session.user.id,
+          id: session.user.id,
+          email: session.user.email,
+          displayName: session.user.user_metadata?.full_name,
+        });
+      }
+    });
+
+    return () => { subscription.unsubscribe(); };
   },
 
   signOut: async () => {
-    await delay(500);
-    currentMockUser = null;
-    if (authStateCallback) authStateCallback(null);
+    await supabase.auth.signOut();
   }
 };
 
 export const userService = {
   getUserProfile: async (uid: string) => {
-    await delay(300);
-    return { data: { ...currentMockUser, driverVerificationStatus: 'VERIFIED' }, error: null };
+    try {
+      const { data: userData, error } = await supabase.from('users').select('*').eq('id', uid).single();
+      if (error) throw error;
+      
+      let driverVerificationStatus = 'NONE';
+      const { data: driverData } = await supabase.from('drivers').select('verification_status').eq('id', uid).single();
+      if (driverData) {
+         const status = driverData.verification_status;
+         if (status === 'approved') driverVerificationStatus = 'VERIFIED';
+         else if (status === 'pending') driverVerificationStatus = 'PENDING';
+         else if (status === 'rejected') driverVerificationStatus = 'REJECTED';
+      }
+      
+      return { data: { ...userData, driverVerificationStatus }, error: null };
+    } catch (error: any) {
+      return { data: null, error: error.message };
+    }
   },
   
   updateProfile: async (uid: string, data: any) => {
-    await delay(300);
-    currentMockUser = { ...currentMockUser, ...data };
-    return { data: currentMockUser, error: null };
+    try {
+      const { data: updated, error } = await supabase.from('users').update(data).eq('id', uid).select().single();
+      if (error) throw error;
+      return { data: updated, error: null };
+    } catch (error: any) {
+      return { data: null, error: error.message };
+    }
   },
 
   topUpBalance: async (uid: string, amount: number) => {
-    await delay(300);
-    if (currentMockUser) {
-        currentMockUser.walletBalance += amount;
+    try {
+      // In a real app this would use an RPC call to avoid race conditions
+      const { data } = await supabase.from('users').select('wallet_balance').eq('id', uid).single();
+      const newBalance = (data?.wallet_balance || 0) + amount;
+      await supabase.from('users').update({ wallet_balance: newBalance }).eq('id', uid);
+      return { error: null };
+    } catch (error: any) {
+      return { error };
     }
-    return { error: null };
   }
 };
-
-let mockTrips: Trip[] = [
-    {
-        id: "trip-1",
-        driverId: "mock-user-123",
-        driverName: "John Doe",
-        driverAvatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=JohnDoe",
-        origin: { name: "Kochi", lat: 9.9312, lng: 76.2673 },
-        destination: { name: "Trivandrum", lat: 8.5241, lng: 76.9366 },
-        departureTime: Date.now() + 86400000, // tomorrow
-        pricePerSeat: 500,
-        availableSeats: 3,
-        carModel: "Toyota Innova",
-        status: "OPEN" as TripStatus,
-        createdAt: Date.now()
-    },
-    {
-        id: "trip-2",
-        driverId: "driver-456",
-        driverName: "Alice Smith",
-        driverAvatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Alice",
-        origin: { name: "Calicut", lat: 11.2588, lng: 75.7804 },
-        destination: { name: "Kochi", lat: 9.9312, lng: 76.2673 },
-        departureTime: Date.now() + 172800000, 
-        pricePerSeat: 400,
-        availableSeats: 2,
-        carModel: "Honda City",
-        status: "OPEN" as TripStatus,
-        createdAt: Date.now() - 3600000
-    }
-];
 
 export const tripService = {
   listenToTrips: (callback: (trips: Trip[]) => void) => {
-    // Send immediate initial data
-    callback(mockTrips.filter(t => t.status === 'OPEN'));
-    // Return unsubscribe function
-    return () => {};
+    // Initial fetch
+    supabase.from('trips').select('*').eq('status', 'OPEN').then(({ data }) => {
+      if (data) callback(data as Trip[]);
+    });
+
+    // Subscribe to changes
+    const channel = supabase
+      .channel('public:trips')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'trips', filter: "status=eq.OPEN" }, payload => {
+         supabase.from('trips').select('*').eq('status', 'OPEN').then(({ data }) => {
+            if (data) callback(data as Trip[]);
+         });
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   },
   
   createTrip: async (tripData: any) => {
-    await delay(500);
-    const newTrip = { id: `trip-${Date.now()}`, ...tripData, createdAt: Date.now() };
-    mockTrips.push(newTrip);
-    return { data: newTrip, error: null };
+    try {
+      const { data, error } = await supabase.from('trips').insert({ ...tripData, created_at: Date.now() }).select().single();
+      if (error) throw error;
+      return { data, error: null };
+    } catch (error: any) {
+      return { data: null, error };
+    }
   }
 };
 
-let mockBookings: Booking[] = [];
-
 export const bookingService = {
   createBooking: async (bookingData: any, paymentMethod: string) => {
-    await delay(500);
-    const newBooking = {
-        ...bookingData,
-        id: `booking-${Date.now()}`,
-        riderId: bookingData.userId,
-        driverId: bookingData.driverId,
-        paymentMethod,
+    try {
+      const bookingPayload = {
+        trip_id: bookingData.tripId,
+        rider_id: bookingData.userId,
+        driver_id: bookingData.driverId,
+        amount: bookingData.amount,
+        payment_method: paymentMethod,
         status: 'CONFIRMED',
-        createdAt: Date.now()
-    };
-    mockBookings.push(newBooking);
+        created_at: Date.now()
+      };
+      
+      // Since we disabled RLS and functions, we do multiple sequential queries here
+      // Ideally this should be an RPC transaction in Supabase
+      const { data: booking, error } = await supabase.from('bookings').insert(bookingPayload).select().single();
+      if (error) throw error;
 
-    if (paymentMethod === 'WALLET' && currentMockUser) {
-       currentMockUser.walletBalance -= (bookingData.amount + 5);
-       currentMockUser.tripsCount += 1;
-       currentMockUser.co2Saved += 0.8;
-       currentMockUser.moneySaved += (bookingData.amount * 0.5);
-    }
-    
-    // Update trip seats
-    const trip = mockTrips.find(t => t.id === bookingData.tripId);
-    if (trip) {
-        trip.availableSeats -= 1;
-        if (trip.availableSeats === 0) trip.status = 'FULL' as TripStatus;
-    }
+      if (paymentMethod === 'WALLET') {
+          const { data: user } = await supabase.from('users').select('wallet_balance, trips_count, co2_saved, money_saved').eq('id', bookingData.userId).single();
+          if (user) {
+             await supabase.from('users').update({
+                wallet_balance: user.wallet_balance - (bookingData.amount + 5),
+                trips_count: user.trips_count + 1,
+                co2_saved: user.co2_saved + 0.8,
+                money_saved: user.money_saved + (bookingData.amount * 0.5)
+             }).eq('id', bookingData.userId);
+          }
+      }
 
-    return { data: newBooking, error: null };
+      const { data: trip } = await supabase.from('trips').select('available_seats').eq('id', bookingData.tripId).single();
+      if (trip) {
+         const newSeats = trip.available_seats - 1;
+         await supabase.from('trips').update({ 
+             available_seats: newSeats,
+             status: newSeats <= 0 ? 'FULL' : 'OPEN'
+         }).eq('id', bookingData.tripId);
+      }
+
+      return { data: { id: booking.id, ...bookingData, status: 'CONFIRMED' }, error: null };
+    } catch (error: any) {
+      return { data: null, error };
+    }
   },
 
   cancelBooking: async (bookingId: string, tripId: string, userId: string, refundAmount: number) => {
-    await delay(300);
-    const booking = mockBookings.find(b => b.id === bookingId);
-    if (booking) booking.status = 'CANCELLED';
-    
-    const trip = mockTrips.find(t => t.id === tripId);
-    if (trip) {
-        trip.availableSeats += 1;
-        trip.status = 'OPEN' as TripStatus;
+    try {
+      await supabase.from('bookings').update({ status: 'CANCELLED' }).eq('id', bookingId);
+      
+      const { data: trip } = await supabase.from('trips').select('available_seats').eq('id', tripId).single();
+      if (trip) {
+         await supabase.from('trips').update({ 
+             available_seats: trip.available_seats + 1,
+             status: 'OPEN'
+         }).eq('id', tripId);
+      }
+      
+      const { data: booking } = await supabase.from('bookings').select('payment_method').eq('id', bookingId).single();
+      if (booking && booking.payment_method !== 'DIRECT') {
+          const { data: user } = await supabase.from('users').select('wallet_balance').eq('id', userId).single();
+          if (user) {
+              await supabase.from('users').update({ wallet_balance: user.wallet_balance + refundAmount }).eq('id', userId);
+          }
+      }
+      
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e };
     }
-
-    if (booking?.paymentMethod !== 'DIRECT' && currentMockUser) {
-        currentMockUser.walletBalance += refundAmount;
-    }
-    
-    return { success: true };
   },
 
   getActiveBooking: async (uid: string) => {
-    await delay(200);
-    const active = mockBookings.filter(b => b.riderId === uid && b.status === 'CONFIRMED')
-                               .sort((a, b) => b.createdAt - a.createdAt);
-    return active.length > 0 ? active[0] : null;
+    try {
+      const { data, error } = await supabase.from('bookings')
+         .select('*')
+         .eq('rider_id', uid)
+         .eq('status', 'CONFIRMED')
+         .order('created_at', { ascending: false })
+         .limit(1);
+         
+      if (error || !data || data.length === 0) return null;
+      
+      // Map to frontend expected format
+      const b = data[0];
+      return {
+          id: b.id,
+          tripId: b.trip_id,
+          userId: b.rider_id,
+          driverId: b.driver_id,
+          amount: b.amount,
+          paymentMethod: b.payment_method,
+          status: b.status,
+          createdAt: b.created_at
+      } as Booking;
+    } catch (error) {
+      console.error("Error fetching active booking:", error);
+      return null;
+    }
   },
 
   getUserBookings: async (uid: string) => {
-    await delay(200);
-    return mockBookings.filter(b => b.riderId === uid);
+    const { data } = await supabase.from('bookings').select('*').eq('rider_id', uid);
+    if (!data) return [];
+    return data.map(b => ({
+          id: b.id,
+          tripId: b.trip_id,
+          userId: b.rider_id,
+          driverId: b.driver_id,
+          amount: b.amount,
+          paymentMethod: b.payment_method,
+          status: b.status,
+          createdAt: b.created_at
+    })) as Booking[];
   }
 };
 
 export const driverService = {
   recalculateEarnings: async (uid: string) => {
-    await delay(300);
-    return 1200; // Mock total
+    const { data } = await supabase.from('bookings').select('amount').eq('driver_id', uid).eq('status', 'CONFIRMED');
+    let total = 0;
+    data?.forEach(b => total += (b.amount || 0));
+    await supabase.from('users').update({ earnings: total }).eq('id', uid);
+    return total;
   },
 
   getEarningsHistory: async (uid: string) => {
-    await delay(300);
-    return { data: [] };
+    const { data } = await supabase.from('driver_transactions').select('*').eq('driver_id', uid).order('created_at', { ascending: false });
+    return { data: data || [] };
   },
 
   redeemEarnings: async (uid: string, amount: number, bank: any) => {
-    await delay(500);
-    if (currentMockUser) currentMockUser.earnings = 0;
-    return { success: true };
+    try {
+      await supabase.from('driver_transactions').insert({
+          driver_id: uid, amount, type: 'WITHDRAWAL', status: 'PROCESSING', created_at: Date.now()
+      });
+      await supabase.from('users').update({ earnings: 0 }).eq('id', uid);
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error };
+    }
   },
 
   saveBankDetails: async (uid: string, bank: any) => {
-    await delay(300);
-    return { success: true };
+    try {
+      await supabase.from('users').update({ bank_details: bank }).eq('id', uid);
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error };
+    }
   }
 };
 
 export const locationService = {
   updateUserLocation: async (uid: string, loc: LiveLocation) => {
-    // No-op for mock
+    await supabase.from('live_locations').upsert({ id: uid, ...loc, updated_at: Date.now() });
   },
   listenToUserLocation: (uid: string, callback: (loc: LiveLocation | null) => void) => {
-    callback({ lat: 9.9312, lng: 76.2673, heading: 90, speed: 40 });
-    return () => {};
+    supabase.from('live_locations').select('*').eq('id', uid).single().then(({ data }) => {
+      callback(data ? (data as unknown as LiveLocation) : null);
+    });
+
+    const channel = supabase.channel(`public:live_locations:id=eq.${uid}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'live_locations', filter: `id=eq.${uid}` }, payload => {
+        callback(payload.new as unknown as LiveLocation);
+      }).subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   }
 };
 
-let mockMessages: any[] = [];
 export const chatService = {
   ensureChatExists: async (id: string, participants: string[]) => {
-    return { success: true };
+    try {
+      const { data } = await supabase.from('chats').select('id').eq('id', id).single();
+      if (!data) {
+         await supabase.from('chats').insert({ id, participants, last_message: "" });
+      }
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error };
+    }
   },
   sendMessage: async (id: string, text: string) => {
-    if (!currentMockUser) return { error: "Auth required" };
-    mockMessages.push({ id: Date.now().toString(), senderId: currentMockUser.uid, text, timestamp: Date.now() });
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return { error: "Auth required" };
+    
+    await supabase.from('messages').insert({ chat_id: id, sender_id: session.user.id, text });
+    await supabase.from('chats').update({ last_message: text, updated_at: new Date().toISOString() }).eq('id', id);
     return { success: true };
   },
   listenToMessages: (id: string, callback: (msgs: any[]) => void, errorCallback?: (error: any) => void) => {
-    callback([...mockMessages]);
-    const interval = setInterval(() => callback([...mockMessages]), 1000);
-    return () => clearInterval(interval);
+    supabase.from('messages').select('*').eq('chat_id', id).order('timestamp', { ascending: true }).then(({ data }) => {
+      if (data) callback(data);
+    }).catch(errorCallback);
+
+    const channel = supabase.channel(`public:messages:chat_id=eq.${id}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `chat_id=eq.${id}` }, payload => {
+         // Fetch all again to keep order, or just append. Fetching all is simpler.
+         supabase.from('messages').select('*').eq('chat_id', id).order('timestamp', { ascending: true }).then(({ data }) => {
+            if (data) callback(data);
+         });
+      }).subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   }
 };
 
 export const storageService = {
   uploadKYC: async (file: File, path: string) => {
-    await delay(1000);
-    return { url: "https://via.placeholder.com/150", error: null };
+    const { data, error } = await supabase.storage.from('kyc-documents').upload(path, file);
+    if (error) return { url: null, error };
+    
+    const { data: { publicUrl } } = supabase.storage.from('kyc-documents').getPublicUrl(path);
+    return { url: publicUrl, error: null };
   }
 };
 
 export const kycService = {
   submitCustomerKYC: async (uid: string, data: any) => {
-    await delay(500);
+    await supabase.from('users').update({ kyc_data: data, is_verified: false }).eq('id', uid);
     return { error: null };
   },
   registerDriverBasicInfo: async (uid: string, data: any) => {
-    await delay(500);
+    await supabase.from('drivers').upsert({ id: uid, vehicle_details: data, verification_status: 'incomplete' });
     return { success: true };
   },
   submitDriverKYC: async (uid: string, data: any) => {
-    await delay(500);
-    if (currentMockUser) currentMockUser.isDriver = true;
+    await supabase.from('drivers').update({ license_number: data.license, verification_status: 'pending' }).eq('id', uid);
+    await supabase.from('users').update({ is_driver: true }).eq('id', uid);
     return { error: null };
   }
 };
