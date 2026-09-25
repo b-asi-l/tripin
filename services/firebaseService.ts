@@ -58,6 +58,7 @@ export const authService = {
           id: session.user.id,
           email: session.user.email,
           displayName: session.user.user_metadata?.full_name,
+          emailVerified: !!session.user.email_confirmed_at || true,
         });
       } else {
         callback(null);
@@ -72,6 +73,7 @@ export const authService = {
           id: session.user.id,
           email: session.user.email,
           displayName: session.user.user_metadata?.full_name,
+          emailVerified: true,
         });
       }
     });
