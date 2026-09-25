@@ -1,420 +1,280 @@
-
-import { initializeApp } from "firebase/app";
-import { 
-  getAuth, 
-  createUserWithEmailAndPassword, 
-  signInWithEmailAndPassword, 
-  signOut, 
-  onAuthStateChanged,
-  signInAnonymously,
-  updateProfile as updateAuthProfile,
-  sendEmailVerification,
-  GoogleAuthProvider,
-  signInWithPopup
-} from "firebase/auth";
-import { 
-  getFirestore, 
-  collection, 
-  addDoc, 
-  getDocs, 
-  getDoc,
-  doc, 
-  setDoc, 
-  updateDoc, 
-  query, 
-  where, 
-  onSnapshot,
-  orderBy,
-  limit,
-  writeBatch,
-  increment,
-  serverTimestamp
-} from "firebase/firestore";
-import { 
-  getStorage, 
-  ref, 
-  uploadBytes, 
-  getDownloadURL 
-} from "firebase/storage";
 import { Trip, Booking, TripStatus, LiveLocation, DriverTransaction } from '../types';
 
-const firebaseConfig = {
-  apiKey: "AIzaSyAR-IdPcUwNIIUvniuvMbIQkp7-nhRS3uY",
-  authDomain: "tripinn-99eac.firebaseapp.com",
-  databaseURL: "https://tripinn-99eac-default-rtdb.firebaseio.com",
-  projectId: "tripinn-99eac",
-  storageBucket: "tripinn-99eac.firebasestorage.app",
-  messagingSenderId: "202151111336",
-  appId: "1:202151111336:web:e8553d68a603787cc2709d"
+// Mock user data
+const mockUser = {
+  uid: "mock-user-123",
+  id: "mock-user-123",
+  email: "demo@tripin.in",
+  displayName: "Demo User",
+  name: "Demo User",
+  photoURL: "https://api.dicebear.com/7.x/avataaars/svg?seed=DemoUser",
+  avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=DemoUser",
+  role: "customer",
+  isDriver: false,
+  rating: 5.0,
+  tripsCount: 2,
+  isOnboarded: true,
+  isVerified: true,
+  co2Saved: 10,
+  moneySaved: 50,
+  fuelSaved: 5,
+  walletBalance: 1500,
+  earnings: 0,
+  level: 2,
+  createdAt: Date.now()
 };
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const storage = getStorage(app);
+let authStateCallback: any = null;
+let currentMockUser: any = null;
+
+// Helper to simulate network delay
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export const authService = {
   signUp: async (email: string, password: string, name: string) => {
-    try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const user = userCredential.user;
-      const avatar = `https://api.dicebear.com/7.x/avataaars/svg?seed=${name?.replace(/\s/g, '')}`;
-
-      await updateAuthProfile(user, { displayName: name, photoURL: avatar });
-      await sendEmailVerification(user);
-
-      await setDoc(doc(db, "users", user.uid), {
-            id: user.uid,
-            uid: user.uid,
-            name: name,
-            email: email,
-            avatar: avatar,
-            role: "customer",
-            isDriver: false,
-            rating: 5.0,
-            tripsCount: 0,
-            isOnboarded: false,
-            isVerified: false,
-            co2Saved: 0,
-            moneySaved: 0,
-            fuelSaved: 0,
-            walletBalance: 0,
-            earnings: 0,
-            level: 1,
-            createdAt: Date.now()
-      });
-      
-      return { data: { user: user }, error: null };
-    } catch (error: any) {
-      return { data: null, error: { message: error.message } };
-    }
+    await delay(500);
+    currentMockUser = { ...mockUser, email, name, displayName: name };
+    if (authStateCallback) authStateCallback(currentMockUser);
+    return { data: { user: currentMockUser }, error: null };
   },
   
   signIn: async (email: string, password: string) => {
-    try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      return { data: { user: userCredential.user }, error: null };
-    } catch (error: any) {
-      return { data: null, error: { message: error.message } };
-    }
+    await delay(500);
+    currentMockUser = { ...mockUser, email };
+    if (authStateCallback) authStateCallback(currentMockUser);
+    return { data: { user: currentMockUser }, error: null };
   },
 
   signInWithGoogle: async () => {
-    try {
-      const provider = new GoogleAuthProvider();
-      const userCredential = await signInWithPopup(auth, provider);
-      const user = userCredential.user;
-
-      const userRef = doc(db, "users", user.uid);
-      const userSnap = await getDoc(userRef);
-      
-      if (!userSnap.exists()) {
-         await setDoc(userRef, {
-              id: user.uid,
-              uid: user.uid,
-              name: user.displayName || 'Google User',
-              email: user.email,
-              avatar: user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
-              role: "customer",
-              isDriver: false,
-              rating: 5.0,
-              tripsCount: 0,
-              isOnboarded: false,
-              isVerified: false,
-              co2Saved: 0,
-              moneySaved: 0,
-              fuelSaved: 0,
-              walletBalance: 0,
-              earnings: 0,
-              level: 1,
-              createdAt: Date.now()
-        });
-      }
-      return { data: { user: user }, error: null };
-    } catch (error: any) {
-      return { data: null, error: { message: error.message } };
-    }
+    await delay(500);
+    currentMockUser = { ...mockUser };
+    if (authStateCallback) authStateCallback(currentMockUser);
+    return { data: { user: currentMockUser }, error: null };
   },
 
   onAuthStateChange: (callback: (user: any) => void) => {
-    return onAuthStateChanged(auth, (user) => {
-        if (user) {
-            callback({
-                uid: user.uid,
-                id: user.uid,
-                email: user.email,
-                displayName: user.displayName,
-                photoURL: user.photoURL,
-                emailVerified: user.emailVerified,
-            });
-        } else {
-            callback(null);
-        }
-    });
+    authStateCallback = callback;
+    // Call immediately if user already exists
+    if (currentMockUser) {
+        callback(currentMockUser);
+    } else {
+        // Mock checking auth state initially, then auto login for demo
+        setTimeout(() => {
+           currentMockUser = { ...mockUser };
+           callback(currentMockUser);
+        }, 1000);
+    }
+    return () => { authStateCallback = null; };
   },
 
   signOut: async () => {
-    await signOut(auth);
+    await delay(500);
+    currentMockUser = null;
+    if (authStateCallback) authStateCallback(null);
   }
 };
 
 export const userService = {
   getUserProfile: async (uid: string) => {
-    try {
-      const userSnap = await getDoc(doc(db, "users", uid));
-      if (userSnap.exists()) {
-        const userData = userSnap.data();
-        let driverVerificationStatus = 'NONE';
-        try {
-            const driverSnap = await getDoc(doc(db, "drivers", uid));
-            if (driverSnap.exists()) {
-                const status = driverSnap.data().verificationStatus;
-                if (status === 'approved') driverVerificationStatus = 'VERIFIED';
-                else if (status === 'pending') driverVerificationStatus = 'PENDING';
-                else if (status === 'rejected') driverVerificationStatus = 'REJECTED';
-            }
-        } catch (e) {}
-        return { data: { ...userData, driverVerificationStatus }, error: null };
-      }
-      return { data: null, error: "Profile not found" };
-    } catch (error: any) {
-      return { data: null, error };
-    }
+    await delay(300);
+    return { data: { ...currentMockUser, driverVerificationStatus: 'VERIFIED' }, error: null };
   },
   
   updateProfile: async (uid: string, data: any) => {
-    try {
-      await setDoc(doc(db, "users", uid), data, { merge: true });
-      return { data, error: null };
-    } catch (error: any) {
-      return { data: null, error };
-    }
+    await delay(300);
+    currentMockUser = { ...currentMockUser, ...data };
+    return { data: currentMockUser, error: null };
   },
 
   topUpBalance: async (uid: string, amount: number) => {
-    try {
-      await updateDoc(doc(db, "users", uid), {
-        walletBalance: increment(amount)
-      });
-      return { error: null };
-    } catch (error: any) {
-      return { error };
+    await delay(300);
+    if (currentMockUser) {
+        currentMockUser.walletBalance += amount;
     }
+    return { error: null };
   }
 };
+
+let mockTrips: Trip[] = [
+    {
+        id: "trip-1",
+        driverId: "mock-user-123",
+        driverName: "John Doe",
+        driverAvatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=JohnDoe",
+        origin: { name: "Kochi", lat: 9.9312, lng: 76.2673 },
+        destination: { name: "Trivandrum", lat: 8.5241, lng: 76.9366 },
+        departureTime: Date.now() + 86400000, // tomorrow
+        pricePerSeat: 500,
+        availableSeats: 3,
+        carModel: "Toyota Innova",
+        status: "OPEN" as TripStatus,
+        createdAt: Date.now()
+    },
+    {
+        id: "trip-2",
+        driverId: "driver-456",
+        driverName: "Alice Smith",
+        driverAvatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Alice",
+        origin: { name: "Calicut", lat: 11.2588, lng: 75.7804 },
+        destination: { name: "Kochi", lat: 9.9312, lng: 76.2673 },
+        departureTime: Date.now() + 172800000, 
+        pricePerSeat: 400,
+        availableSeats: 2,
+        carModel: "Honda City",
+        status: "OPEN" as TripStatus,
+        createdAt: Date.now() - 3600000
+    }
+];
 
 export const tripService = {
   listenToTrips: (callback: (trips: Trip[]) => void) => {
-    const q = query(collection(db, "trips"), where("status", "==", "OPEN"));
-    return onSnapshot(q, (snapshot) => {
-      const trips = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Trip));
-      callback(trips);
-    });
+    // Send immediate initial data
+    callback(mockTrips.filter(t => t.status === 'OPEN'));
+    // Return unsubscribe function
+    return () => {};
   },
   
   createTrip: async (tripData: any) => {
-    try {
-      const docRef = await addDoc(collection(db, "trips"), { ...tripData, createdAt: Date.now() });
-      return { data: { id: docRef.id, ...tripData }, error: null };
-    } catch (error: any) {
-      return { data: null, error };
-    }
+    await delay(500);
+    const newTrip = { id: `trip-${Date.now()}`, ...tripData, createdAt: Date.now() };
+    mockTrips.push(newTrip);
+    return { data: newTrip, error: null };
   }
 };
 
+let mockBookings: Booking[] = [];
+
 export const bookingService = {
   createBooking: async (bookingData: any, paymentMethod: string) => {
-    try {
-      const batch = writeBatch(db);
-      const bookingRef = doc(collection(db, "bookings"));
-      const bookingPayload = {
+    await delay(500);
+    const newBooking = {
         ...bookingData,
-        id: bookingRef.id,
+        id: `booking-${Date.now()}`,
         riderId: bookingData.userId,
         driverId: bookingData.driverId,
         paymentMethod,
         status: 'CONFIRMED',
         createdAt: Date.now()
-      };
-      
-      batch.set(bookingRef, bookingPayload);
+    };
+    mockBookings.push(newBooking);
 
-      if (paymentMethod === 'WALLET') {
-          batch.update(doc(db, "users", bookingData.userId), {
-              walletBalance: increment(-(bookingData.amount + 5))
-          });
-      }
-
-      // Decrement seats AND set status to FULL so it disappears from public pool
-      const tripRef = doc(db, "trips", bookingData.tripId);
-      batch.update(tripRef, { 
-          availableSeats: increment(-1),
-          status: 'FULL' 
-      });
-
-      batch.update(doc(db, "users", bookingData.userId), {
-          tripsCount: increment(1),
-          co2Saved: increment(0.8),
-          moneySaved: increment(bookingData.amount * 0.5)
-      });
-
-      await batch.commit();
-      return { data: bookingPayload, error: null };
-    } catch (error: any) {
-      return { data: null, error };
+    if (paymentMethod === 'WALLET' && currentMockUser) {
+       currentMockUser.walletBalance -= (bookingData.amount + 5);
+       currentMockUser.tripsCount += 1;
+       currentMockUser.co2Saved += 0.8;
+       currentMockUser.moneySaved += (bookingData.amount * 0.5);
     }
+    
+    // Update trip seats
+    const trip = mockTrips.find(t => t.id === bookingData.tripId);
+    if (trip) {
+        trip.availableSeats -= 1;
+        if (trip.availableSeats === 0) trip.status = 'FULL' as TripStatus;
+    }
+
+    return { data: newBooking, error: null };
   },
 
   cancelBooking: async (bookingId: string, tripId: string, userId: string, refundAmount: number) => {
-    try {
-      const batch = writeBatch(db);
-      batch.update(doc(db, "bookings", bookingId), { status: 'CANCELLED' });
-      batch.update(doc(db, "trips", tripId), { 
-        availableSeats: increment(1),
-        status: 'OPEN' 
-      });
-      
-      const bookingSnap = await getDoc(doc(db, "bookings", bookingId));
-      if (bookingSnap.exists() && bookingSnap.data().paymentMethod !== 'DIRECT') {
-          batch.update(doc(db, "users", userId), { walletBalance: increment(refundAmount) });
-      }
-      
-      await batch.commit();
-      return { success: true };
-    } catch (e: any) {
-      return { success: false, error: e };
+    await delay(300);
+    const booking = mockBookings.find(b => b.id === bookingId);
+    if (booking) booking.status = 'CANCELLED';
+    
+    const trip = mockTrips.find(t => t.id === tripId);
+    if (trip) {
+        trip.availableSeats += 1;
+        trip.status = 'OPEN' as TripStatus;
     }
+
+    if (booking?.paymentMethod !== 'DIRECT' && currentMockUser) {
+        currentMockUser.walletBalance += refundAmount;
+    }
+    
+    return { success: true };
   },
 
   getActiveBooking: async (uid: string) => {
-    try {
-      // Adjusted to perform client-side sorting to avoid Firestore index requirement
-      const q = query(
-        collection(db, "bookings"), 
-        where("riderId", "==", uid), 
-        where("status", "==", "CONFIRMED")
-      );
-      
-      const snap = await getDocs(q);
-      if (snap.empty) return null;
-      
-      // Convert to Booking objects
-      const bookings = snap.docs.map(doc => doc.data() as Booking);
-      
-      // Sort in memory (descending by createdAt)
-      bookings.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-      
-      // Return the most recent one
-      return bookings[0];
-    } catch (error) {
-      console.error("Error fetching active booking:", error);
-      return null;
-    }
+    await delay(200);
+    const active = mockBookings.filter(b => b.riderId === uid && b.status === 'CONFIRMED')
+                               .sort((a, b) => b.createdAt - a.createdAt);
+    return active.length > 0 ? active[0] : null;
   },
 
   getUserBookings: async (uid: string) => {
-    const q = query(collection(db, "bookings"), where("riderId", "==", uid));
-    const snap = await getDocs(q);
-    return snap.docs.map(doc => doc.data() as Booking);
+    await delay(200);
+    return mockBookings.filter(b => b.riderId === uid);
   }
 };
 
 export const driverService = {
   recalculateEarnings: async (uid: string) => {
-    const q = query(collection(db, "bookings"), where("driverId", "==", uid), where("status", "==", "CONFIRMED"));
-    const snap = await getDocs(q);
-    let total = 0;
-    snap.forEach(doc => total += (doc.data().amount || 0));
-    await updateDoc(doc(db, "users", uid), { earnings: total });
-    return total;
+    await delay(300);
+    return 1200; // Mock total
   },
 
   getEarningsHistory: async (uid: string) => {
-    const q = query(collection(db, "driver_transactions"), where("driverId", "==", uid), orderBy("createdAt", "desc"));
-    const snap = await getDocs(q);
-    return { data: snap.docs.map(doc => ({ id: doc.id, ...doc.data() })) };
+    await delay(300);
+    return { data: [] };
   },
 
   redeemEarnings: async (uid: string, amount: number, bank: any) => {
-    try {
-      const batch = writeBatch(db);
-      const txRef = doc(collection(db, "driver_transactions"));
-      batch.set(txRef, {
-          driverId: uid, amount, type: 'WITHDRAWAL', status: 'PROCESSING', createdAt: Date.now()
-      });
-      batch.update(doc(db, "users", uid), { earnings: 0 });
-      await batch.commit();
-      return { success: true };
-    } catch (error: any) {
-      return { success: false, error };
-    }
+    await delay(500);
+    if (currentMockUser) currentMockUser.earnings = 0;
+    return { success: true };
   },
 
   saveBankDetails: async (uid: string, bank: any) => {
-    try {
-      await updateDoc(doc(db, "users", uid), { bankDetails: bank });
-      return { success: true };
-    } catch (error: any) {
-      return { success: false, error };
-    }
+    await delay(300);
+    return { success: true };
   }
 };
 
 export const locationService = {
   updateUserLocation: async (uid: string, loc: LiveLocation) => {
-    await setDoc(doc(db, "live_locations", uid), { ...loc, updatedAt: Date.now() });
+    // No-op for mock
   },
   listenToUserLocation: (uid: string, callback: (loc: LiveLocation | null) => void) => {
-    return onSnapshot(doc(db, "live_locations", uid), (snap) => {
-      if (snap.exists()) callback(snap.data() as LiveLocation);
-      else callback(null);
-    });
+    callback({ lat: 9.9312, lng: 76.2673, heading: 90, speed: 40 });
+    return () => {};
   }
 };
 
+let mockMessages: any[] = [];
 export const chatService = {
   ensureChatExists: async (id: string, participants: string[]) => {
-    try {
-      await setDoc(doc(db, "chats", id), { participants, lastMessage: "", updatedAt: serverTimestamp() }, { merge: true });
-      return { success: true };
-    } catch (error: any) {
-      return { success: false, error };
-    }
+    return { success: true };
   },
   sendMessage: async (id: string, text: string) => {
-    const user = auth.currentUser;
-    if (!user) return { error: "Auth required" };
-    await addDoc(collection(db, "chats", id, "messages"), { senderId: user.uid, text, timestamp: serverTimestamp() });
-    await updateDoc(doc(db, "chats", id), { lastMessage: text, updatedAt: serverTimestamp() });
+    if (!currentMockUser) return { error: "Auth required" };
+    mockMessages.push({ id: Date.now().toString(), senderId: currentMockUser.uid, text, timestamp: Date.now() });
     return { success: true };
   },
   listenToMessages: (id: string, callback: (msgs: any[]) => void, errorCallback?: (error: any) => void) => {
-    const q = query(collection(db, "chats", id, "messages"), orderBy("timestamp", "asc"));
-    return onSnapshot(q, (snap) => callback(snap.docs.map(d => ({ id: d.id, ...d.data() }))), errorCallback);
+    callback([...mockMessages]);
+    const interval = setInterval(() => callback([...mockMessages]), 1000);
+    return () => clearInterval(interval);
   }
 };
 
 export const storageService = {
   uploadKYC: async (file: File, path: string) => {
-    const storageRef = ref(storage, path);
-    const snap = await uploadBytes(storageRef, file);
-    const url = await getDownloadURL(snap.ref);
-    return { url, error: null };
+    await delay(1000);
+    return { url: "https://via.placeholder.com/150", error: null };
   }
 };
 
 export const kycService = {
   submitCustomerKYC: async (uid: string, data: any) => {
-    await updateDoc(doc(db, "users", uid), { kycData: data, isVerified: false });
+    await delay(500);
     return { error: null };
   },
   registerDriverBasicInfo: async (uid: string, data: any) => {
-    await setDoc(doc(db, "drivers", uid), { ...data, verificationStatus: 'incomplete' }, { merge: true });
+    await delay(500);
     return { success: true };
   },
   submitDriverKYC: async (uid: string, data: any) => {
-    await updateDoc(doc(db, "drivers", uid), { licenseNumber: data.license, verificationStatus: 'pending' });
-    await updateDoc(doc(db, "users", uid), { isDriver: true });
+    await delay(500);
+    if (currentMockUser) currentMockUser.isDriver = true;
     return { error: null };
   }
 };
