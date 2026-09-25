@@ -1,10 +1,10 @@
-
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import { User, Booking, LiveLocation } from '../types';
 import { locationService } from '../services/firebaseService';
 import { Icons } from '../constants';
-
-declare const L: any;
 
 interface Props {
   user: User;
@@ -12,18 +12,42 @@ interface Props {
   onBack: () => void;
 }
 
-export const LiveTrackingScreen: React.FC<Props> = ({ user, booking, onBack }) => {
-  const mapRef = useRef<HTMLDivElement>(null);
-  const leafletInstance = useRef<any>(null);
-  const userMarker = useRef<any>(null);
-  const driverMarker = useRef<any>(null);
-  const polyline = useRef<any>(null);
+// Map bounds updater component
+const MapUpdater = ({ userLoc, driverLoc }: { userLoc: LiveLocation | null, driverLoc: LiveLocation | null }) => {
+  const map = useMap();
+  useEffect(() => {
+    if (userLoc && driverLoc) {
+      const bounds = L.latLngBounds(
+        [userLoc.lat, userLoc.lng],
+        [driverLoc.lat, driverLoc.lng]
+      );
+      map.fitBounds(bounds, { padding: [50, 50] });
+    } else if (userLoc) {
+      map.setView([userLoc.lat, userLoc.lng], 15);
+    }
+  }, [userLoc, driverLoc, map]);
+  return null;
+};
 
+// Custom icons
+const createUserIcon = () => L.divIcon({
+  className: 'user-marker',
+  html: `<div class="w-8 h-8 bg-blue-500 rounded-full border-4 border-white shadow-xl flex items-center justify-center text-white"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>`,
+  iconSize: [32, 32]
+});
+
+const createDriverIcon = () => L.divIcon({
+  className: 'driver-marker',
+  html: `<div class="w-10 h-10 bg-emerald-500 rounded-full border-4 border-white shadow-xl flex items-center justify-center text-white animate-bounce"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/></svg></div>`,
+  iconSize: [40, 40]
+});
+
+export const LiveTrackingScreen: React.FC<Props> = ({ user, booking, onBack }) => {
   const [driverLocation, setDriverLocation] = useState<LiveLocation | null>(null);
   const [userLocation, setUserLocation] = useState<LiveLocation | null>(null);
 
   useEffect(() => {
-    // 1. Start watching user's own location
+    // Watch Rider's Location
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
         const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
@@ -34,7 +58,7 @@ export const LiveTrackingScreen: React.FC<Props> = ({ user, booking, onBack }) =
       { enableHighAccuracy: true }
     );
 
-    // 2. Listen to driver's location
+    // Watch Driver's Location via Supabase Realtime
     const unsubscribe = locationService.listenToUserLocation(booking.driverId, (loc) => {
       if (loc) setDriverLocation(loc);
     });
@@ -45,79 +69,60 @@ export const LiveTrackingScreen: React.FC<Props> = ({ user, booking, onBack }) =
     };
   }, [user.id, booking.driverId]);
 
-  useEffect(() => {
-    if (mapRef.current && !leafletInstance.current && typeof L !== 'undefined') {
-      leafletInstance.current = L.map(mapRef.current, { zoomControl: false, attributionControl: false }).setView([10.8505, 76.2711], 13);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(leafletInstance.current);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!leafletInstance.current || typeof L === 'undefined') return;
-
-    // Update User Marker
-    if (userLocation) {
-      if (!userMarker.current) {
-        userMarker.current = L.marker([userLocation.lat, userLocation.lng], {
-          icon: L.divIcon({ 
-            className: 'user-marker', 
-            html: `<div class="w-8 h-8 bg-blue-500 rounded-full border-4 border-white shadow-xl flex items-center justify-center text-white"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>`, 
-            iconSize: [32, 32] 
-          })
-        }).addTo(leafletInstance.current).bindPopup("You");
-      } else {
-        userMarker.current.setLatLng([userLocation.lat, userLocation.lng]);
-      }
-    }
-
-    // Update Driver Marker
-    if (driverLocation) {
-      if (!driverMarker.current) {
-        driverMarker.current = L.marker([driverLocation.lat, driverLocation.lng], {
-          icon: L.divIcon({ 
-            className: 'driver-marker', 
-            html: `<div class="w-10 h-10 bg-emerald-500 rounded-full border-4 border-white shadow-xl flex items-center justify-center text-white animate-bounce"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/></svg></div>`, 
-            iconSize: [40, 40] 
-          })
-        }).addTo(leafletInstance.current).bindPopup(booking.ownerName);
-      } else {
-        driverMarker.current.setLatLng([driverLocation.lat, driverLocation.lng]);
-      }
-    }
-
-    // Update Route Line
-    if (userLocation && driverLocation) {
-      if (polyline.current) polyline.current.remove();
-      polyline.current = L.polyline([[userLocation.lat, userLocation.lng], [driverLocation.lat, driverLocation.lng]], { 
-        color: '#10b981', 
-        weight: 4, 
-        dashArray: '10, 10', 
-        opacity: 0.6 
-      }).addTo(leafletInstance.current);
-
-      const bounds = L.latLngBounds([
-        [userLocation.lat, userLocation.lng],
-        [driverLocation.lat, driverLocation.lng]
-      ]);
-      leafletInstance.current.fitBounds(bounds, { padding: [100, 100] });
-    } else if (userLocation) {
-      leafletInstance.current.setView([userLocation.lat, userLocation.lng], 15);
-    }
-  }, [userLocation, driverLocation]);
-
   return (
     <div className="h-full flex flex-col relative bg-surface-alt">
-      <div ref={mapRef} className="flex-1 z-0" />
       
-      <div className="absolute top-6 left-6 right-6 z-10 flex items-center justify-between">
+      {/* React Leaflet Map */}
+      <div className="flex-1 z-0 relative">
+        <MapContainer 
+          center={[10.8505, 76.2711]} // Default to Kerala
+          zoom={13} 
+          zoomControl={false} 
+          style={{ width: '100%', height: '100%' }}
+        >
+          <TileLayer
+            attribution='&copy; OpenStreetMap'
+            url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+          />
+          
+          <MapUpdater userLoc={userLocation} driverLoc={driverLocation} />
+
+          {userLocation && (
+            <Marker position={[userLocation.lat, userLocation.lng]} icon={createUserIcon()}>
+              <Popup>You are here</Popup>
+            </Marker>
+          )}
+
+          {driverLocation && (
+            <Marker position={[driverLocation.lat, driverLocation.lng]} icon={createDriverIcon()}>
+              <Popup>{booking.ownerName}</Popup>
+            </Marker>
+          )}
+
+          {userLocation && driverLocation && (
+             <Polyline 
+                positions={[
+                  [userLocation.lat, userLocation.lng], 
+                  [driverLocation.lat, driverLocation.lng]
+                ]} 
+                color="#10b981" 
+                weight={5} 
+                dashArray="10, 10" 
+             />
+          )}
+        </MapContainer>
+      </div>
+      
+      {/* Top Overlay */}
+      <div className="absolute top-6 left-6 right-6 z-10 flex items-center justify-between pointer-events-none">
         <button 
           onClick={onBack} 
-          className="bg-white/90 backdrop-blur-md p-4 rounded-3xl shadow-2xl border border-subtle text-main active:scale-95 transition-all"
+          className="pointer-events-auto bg-white/90 backdrop-blur-md p-4 rounded-3xl shadow-2xl border border-subtle text-main active:scale-95 transition-all"
         >
           ←
         </button>
-        <div className="bg-white/90 backdrop-blur-md px-6 py-4 rounded-3xl shadow-2xl border border-subtle flex items-center gap-3">
-          <img src={booking.ownerAvatar} className="w-8 h-8 rounded-full border border-subtle" />
+        <div className="pointer-events-auto bg-white/90 backdrop-blur-md px-6 py-4 rounded-3xl shadow-2xl border border-subtle flex items-center gap-3">
+          <img src={booking.ownerAvatar} className="w-8 h-8 rounded-full border border-subtle" alt="driver" />
           <div>
             <p className="text-[10px] font-black uppercase text-main leading-none">{booking.ownerName}</p>
             <p className="text-[8px] font-bold text-emerald-600 uppercase tracking-widest mt-1">Driving to you</p>
@@ -125,6 +130,7 @@ export const LiveTrackingScreen: React.FC<Props> = ({ user, booking, onBack }) =
         </div>
       </div>
 
+      {/* Bottom Overlay */}
       <div className="absolute bottom-10 left-6 right-6 z-10">
         <div className="bg-white/90 backdrop-blur-xl p-8 rounded-[40px] shadow-2xl border border-subtle space-y-6">
           <div className="flex justify-between items-center">
